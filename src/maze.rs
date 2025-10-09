@@ -5,26 +5,41 @@ use crossterm::{
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
+/// Represents a cell in the maze, which can be either a path or a wall.
 pub enum Cell {
+    Path(PathType),
+    Wall(WallType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+/// Represents different types of path cells in the maze.
+pub enum PathType {
+    Empty,
+    Visited,
     Start,
     Goal,
-    Wall,
-    Path,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+/// Represents different types of wall cells in the maze.
+pub enum WallType {
+    Block,
     Frontier,
-    Visited,
-    Empty,
 }
 
 impl fmt::Display for Cell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let styled_symbol = match self {
-            Cell::Start => "S ".with(Color::Green),
-            Cell::Goal => "G ".with(Color::Red),
-            Cell::Wall => "# ".with(Color::White),
-            Cell::Path => "* ".with(Color::Yellow),
-            Cell::Frontier => "+ ".with(Color::Magenta),
-            Cell::Visited => ". ".with(Color::Blue),
-            Cell::Empty => "  ".with(Color::Reset),
+            Cell::Path(path) => match path {
+                PathType::Empty => "  ".with(Color::Reset),
+                PathType::Visited => ". ".with(Color::Blue),
+                PathType::Start => "S ".with(Color::Green),
+                PathType::Goal => "G ".with(Color::Red),
+            },
+            Cell::Wall(wall) => match wall {
+                WallType::Block => "# ".with(Color::White),
+                WallType::Frontier => "+ ".with(Color::Magenta),
+            },
         };
         write!(f, "{}", styled_symbol)
     }
@@ -83,16 +98,17 @@ pub struct Maze {
 impl Maze {
     /// Creates a new maze with the given width and height.
     pub fn new(width: u8, height: u8) -> Self {
+        // n cells in each dimension -> n + 1 walls -> 2n + 1 total
         let grid_height = height as u16 * 2 + 1;
         let grid_width = width as u16 * 2 + 1;
         let mut maze = Maze {
-            grid: Grid::new(grid_width, grid_height, Cell::Wall),
+            grid: Grid::new(grid_width, grid_height, Cell::Wall(WallType::Block)),
             width,
             height,
         };
         (0..height).for_each(|y| {
             (0..width).for_each(|x| {
-                maze[(x, y)] = Cell::Empty;
+                maze[(x, y)] = Cell::Path(PathType::Empty);
             });
         });
         maze
@@ -160,7 +176,7 @@ impl Maze {
         // Math :)
         let wall_x = a.0 as u16 + b.0 as u16 + 1;
         let wall_y = a.1 as u16 + b.1 as u16 + 1;
-        self.grid[(wall_x, wall_y)] = Cell::Empty;
+        self.grid[(wall_x, wall_y)] = Cell::Path(PathType::Empty);
     }
 }
 
@@ -186,7 +202,7 @@ mod tests {
     #[test]
     fn test_maze_indexing() {
         let mut maze = Maze::new(5, 5);
-        maze[(2, 3)] = Cell::Start;
-        assert_eq!(maze[(2, 3)], Cell::Start);
+        maze[(2, 3)] = Cell::Path(PathType::Start);
+        assert_eq!(maze[(2, 3)], Cell::Path(PathType::Start));
     }
 }
