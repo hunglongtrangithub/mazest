@@ -10,6 +10,7 @@ pub enum Cell {
     Goal,
     Wall,
     Path,
+    Frontier,
     Visited,
     Empty,
 }
@@ -17,12 +18,13 @@ pub enum Cell {
 impl fmt::Display for Cell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let styled_symbol = match self {
-            Cell::Start => "S".with(Color::Green),
-            Cell::Goal => "G".with(Color::Red),
-            Cell::Wall => "#".with(Color::DarkGrey),
-            Cell::Path => "*".with(Color::Yellow),
-            Cell::Visited => ".".with(Color::Blue),
-            Cell::Empty => " ".with(Color::Reset),
+            Cell::Start => "S ".with(Color::Green),
+            Cell::Goal => "G ".with(Color::Red),
+            Cell::Wall => "# ".with(Color::White),
+            Cell::Path => "* ".with(Color::Yellow),
+            Cell::Frontier => "+ ".with(Color::Magenta),
+            Cell::Visited => ". ".with(Color::Blue),
+            Cell::Empty => "  ".with(Color::Reset),
         };
         write!(f, "{}", styled_symbol)
     }
@@ -36,12 +38,19 @@ pub struct Maze {
 
 impl Maze {
     pub fn new(width: u16, height: u16) -> Self {
+        let width = if width < 3 { 3 } else { width | 1 };
+        let height = if height < 3 { 3 } else { height | 1 };
         let grid = vec![Cell::Wall; width as usize * height as usize].into_boxed_slice();
         Maze {
             grid,
             width,
             height,
         }
+    }
+
+    #[cfg(test)]
+    pub fn grid(&self) -> &[Cell] {
+        &self.grid
     }
 
     pub fn height(&self) -> u16 {
@@ -59,7 +68,7 @@ impl Maze {
     pub fn display(&self) {
         for y in 0..self.height {
             for x in 0..self.width {
-                print!("{} ", self[(x, y)]);
+                print!("{}", self[(x, y)]);
             }
             println!();
         }
@@ -72,6 +81,9 @@ impl Maze {
             crossterm::cursor::MoveTo(0, 0),
         )?;
         self.display();
+        // // Wait for Enter key press
+        // std::io::stdin().read_line(&mut String::new())?;
+        std::thread::sleep(std::time::Duration::from_millis(10));
         Ok(())
     }
 }

@@ -141,6 +141,7 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "rand",
+ "rand_set",
 ]
 
 [[package]]
@@ -238,6 +239,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "rand_set"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b50c614540fcc35e8506d2afc295d52b1136c0e5c8d49087c7bc296075a0891"
+dependencies = [
+ "rand",
 ]
 
 [[package]]
