@@ -151,7 +151,7 @@ impl Maze {
     }
 
     /// Checks if the given coordinate is within the bounds of the maze.
-    fn is_in_bounds(&self, coord: (u8, u8)) -> bool {
+    pub fn is_in_bounds(&self, coord: (u8, u8)) -> bool {
         coord.0 < self.width && coord.1 < self.height
     }
 
