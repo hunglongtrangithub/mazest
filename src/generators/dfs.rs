@@ -1,4 +1,5 @@
-use crate::maze::{Cell, Maze, PathType, WallType};
+use crate::maze::Maze;
+use crate::maze::cell::{Cell, PathType, WallType};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::generators::get_neighbors;

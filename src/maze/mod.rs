@@ -1,93 +1,10 @@
-use crossterm::{
-    execute,
-    style::{Color, Stylize},
-};
-use std::fmt;
+pub mod cell;
+mod grid;
 
-#[derive(Debug, Clone, PartialEq)]
-/// Represents a cell in the maze, which can be either a path or a wall.
-pub enum Cell {
-    Path(PathType),
-    Wall(WallType),
-}
+use crossterm::execute;
 
-#[derive(Debug, Clone, PartialEq)]
-/// Represents different types of path cells in the maze.
-pub enum PathType {
-    Empty,
-    Visited,
-    Start,
-    Goal,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-/// Represents different types of wall cells in the maze.
-pub enum WallType {
-    Block,
-    Marked,
-}
-
-impl fmt::Display for Cell {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let styled_symbol = match self {
-            Cell::Path(path) => match path {
-                PathType::Empty => "  ".with(Color::Reset),
-                PathType::Visited => ". ".with(Color::Blue),
-                PathType::Start => "S ".with(Color::Green),
-                PathType::Goal => "G ".with(Color::Red),
-            },
-            Cell::Wall(wall) => match wall {
-                WallType::Block => "# ".with(Color::White),
-                WallType::Marked => "+ ".with(Color::Magenta),
-            },
-        };
-        write!(f, "{}", styled_symbol)
-    }
-}
-
-struct Grid {
-    data: Box<[Cell]>,
-    width: u16,
-    height: u16,
-}
-
-impl Grid {
-    fn new(width: u16, height: u16, cell: Cell) -> Self {
-        let data = vec![cell; width as usize * height as usize].into_boxed_slice();
-        Grid {
-            data,
-            width,
-            height,
-        }
-    }
-    fn ravel_index(&self, x: u16, y: u16) -> usize {
-        // Overflow-safe since width and height are u16 (assuming usize is at least 32 bits)
-        y as usize * self.width as usize + x as usize
-    }
-
-    fn display(&self) {
-        for y in 0..self.height {
-            for x in 0..self.width {
-                print!("{}", self[(x, y)]);
-            }
-            println!();
-        }
-    }
-}
-
-impl std::ops::Index<(u16, u16)> for Grid {
-    type Output = Cell;
-
-    fn index(&self, index: (u16, u16)) -> &Self::Output {
-        &self.data[self.ravel_index(index.0, index.1)]
-    }
-}
-
-impl std::ops::IndexMut<(u16, u16)> for Grid {
-    fn index_mut(&mut self, index: (u16, u16)) -> &mut Self::Output {
-        &mut self.data[self.ravel_index(index.0, index.1)]
-    }
-}
+use cell::{Cell, PathType, WallType};
+use grid::Grid;
 
 pub struct Maze {
     grid: Grid,
@@ -214,5 +131,33 @@ mod tests {
         let mut maze = Maze::new(5, 5);
         maze[(2, 3)] = Cell::Path(PathType::Start);
         assert_eq!(maze[(2, 3)], Cell::Path(PathType::Start));
+    }
+
+    #[test]
+    fn test_remove_wall() {
+        let mut maze = Maze::new(5, 5);
+        assert!(maze.remove_wall((1, 1), (1, 2)));
+        // Trying to remove the same wall again should return false
+        assert!(!maze.remove_wall((1, 1), (1, 2)));
+        // Check that the wall has been removed in the grid
+        assert_eq!(maze.grid[(3, 5)], Cell::Path(PathType::Empty));
+    }
+
+    #[test]
+    fn test_out_of_bounds() {
+        let maze = Maze::new(5, 5);
+        assert!(!maze.is_in_bounds((5, 5)));
+        assert!(!maze.is_in_bounds((0, 5)));
+        assert!(!maze.is_in_bounds((5, 0)));
+        assert!(maze.is_in_bounds((4, 4)));
+    }
+
+    #[test]
+    fn test_are_adjacent() {
+        let maze = Maze::new(5, 5);
+        assert!(maze.are_adjacent((1, 1), (1, 2)));
+        assert!(maze.are_adjacent((1, 1), (2, 1)));
+        assert!(!maze.are_adjacent((1, 1), (2, 2)));
+        assert!(!maze.are_adjacent((0, 0), (2, 0)));
     }
 }

@@ -2,7 +2,8 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use rand_set::RandSetDefault;
 
 use crate::generators::get_neighbors;
-use crate::maze::{Cell, Maze, PathType, WallType};
+use crate::maze::Maze;
+use crate::maze::cell::{Cell, PathType, WallType};
 
 /// Requires the maze to be at least 3x3.
 pub fn randomized_prim(maze: &mut Maze) {
@@ -73,13 +74,13 @@ pub fn randomized_prim(maze: &mut Maze) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maze::Cell;
+    use crate::maze::cell::Cell;
 
     #[test]
     fn test_get_neighbors() {
         let maze = Maze::new(7, 7);
         let neighbors = get_neighbors((3, 3), &maze).collect::<Vec<_>>();
-        assert_eq!(neighbors, vec![(1, 3), (5, 3), (3, 1), (3, 5)]);
+        assert_eq!(neighbors, vec![(2, 3), (4, 3), (3, 2), (3, 4)]);
     }
 
     #[test]
