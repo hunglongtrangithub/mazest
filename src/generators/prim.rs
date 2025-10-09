@@ -28,18 +28,15 @@ pub fn randomized_prim(maze: &mut Maze) {
     let mut frontiers = get_neighbors(start, maze)
         .filter(|&coord| maze[coord] == Cell::Wall(WallType::Block))
         .collect::<RandSetDefault<_>>();
+    // Mark all frontier cells as marked in the maze for visualization
+    frontiers
+        .iter()
+        .for_each(|&coord| maze[coord] = Cell::Wall(WallType::Marked));
 
     // Pick a random frontier cell
     while let Some(&frontier) = frontiers.get_rand() {
         // Remove the frontier from the set
         frontiers.remove(&frontier);
-
-        // Mark all frontier cells as frontier in the maze for visualization
-        frontiers
-            .iter()
-            .for_each(|&coord| maze[coord] = Cell::Wall(WallType::Frontier));
-
-        maze.render().ok();
 
         // Get the neighbors of the frontier cell that are part of the maze (i.e., not walls)
         let empty_neighbors = get_neighbors(frontier, maze)
@@ -59,11 +56,16 @@ pub fn randomized_prim(maze: &mut Maze) {
             maze.render().ok();
 
             // Add the neighbors of the frontier cell that are walls to the frontier set
-            get_neighbors(frontier, maze)
+            let neighbors_to_mark = get_neighbors(frontier, maze)
                 .filter(|&coord| maze[coord] == Cell::Wall(WallType::Block))
-                .for_each(|coord| {
-                    frontiers.insert(coord);
-                });
+                .collect::<Vec<_>>();
+
+            for coord in neighbors_to_mark {
+                // Only mark the cell if it hasn't been added to the frontier set before
+                if frontiers.insert(coord) {
+                    maze[coord] = Cell::Wall(WallType::Marked);
+                }
+            }
         }
     }
 }

@@ -21,8 +21,26 @@ fn main() -> std::io::Result<()> {
     let (width, height) = (dims[0], dims[1]);
 
     let mut maze = maze::Maze::new(width, height);
-    maze.render()?;
-    // generators::prim::randomized_prim(&mut maze);
-    generators::dfs::randomized_dfs(&mut maze);
+
+    // Let user select the algorithm
+    input.clear();
+    println!("Select maze generation algorithm:");
+    println!("1. Randomized Depth-First Search (DFS)");
+    println!("2. Prim's Algorithm");
+    std::io::stdin().read_line(&mut input)?;
+    match input.trim() {
+        "1" => {
+            println!("Generating maze using Randomized DFS...");
+            generators::dfs::randomized_dfs(&mut maze);
+        }
+        "2" => {
+            println!("Generating maze using Prim's Algorithm...");
+            generators::prim::randomized_prim(&mut maze);
+        }
+        _ => {
+            eprintln!("Invalid selection. Please enter 1 or 2.");
+            return Ok(());
+        }
+    }
     Ok(())
 }

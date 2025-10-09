@@ -1,5 +1,5 @@
 use crossterm::{
-    queue,
+    execute,
     style::{Color, Stylize},
 };
 use std::fmt;
@@ -24,7 +24,7 @@ pub enum PathType {
 /// Represents different types of wall cells in the maze.
 pub enum WallType {
     Block,
-    Frontier,
+    Marked,
 }
 
 impl fmt::Display for Cell {
@@ -38,7 +38,7 @@ impl fmt::Display for Cell {
             },
             Cell::Wall(wall) => match wall {
                 WallType::Block => "# ".with(Color::White),
-                WallType::Frontier => "+ ".with(Color::Magenta),
+                WallType::Marked => "+ ".with(Color::Magenta),
             },
         };
         write!(f, "{}", styled_symbol)
@@ -135,7 +135,7 @@ impl Maze {
 
     /// Renders the maze to the terminal.
     pub fn render(&self) -> std::io::Result<()> {
-        queue!(
+        execute!(
             std::io::stdout(),
             crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
             crossterm::cursor::MoveTo(0, 0),
@@ -167,7 +167,7 @@ impl Maze {
     }
 
     /// Removes the wall between two adjacent cells a and b.
-    pub fn remove_wall(&mut self, a: (u8, u8), b: (u8, u8)) {
+    pub fn remove_wall(&mut self, a: (u8, u8), b: (u8, u8)) -> bool {
         // Assert that a and b are in bounds and adjacent
         assert!(self.is_in_bounds(a), "Coordinate a is out of bounds");
         assert!(self.is_in_bounds(b), "Coordinate b is out of bounds");
@@ -177,10 +177,16 @@ impl Maze {
         );
 
         // Calculate the wall position in the grid
-        // Math :)
+        // Quick Math :)
         let wall_x = a.0 as u16 + b.0 as u16 + 1;
         let wall_y = a.1 as u16 + b.1 as u16 + 1;
-        self.grid[(wall_x, wall_y)] = Cell::Path(PathType::Empty);
+        match self.grid[(wall_x, wall_y)] {
+            Cell::Wall(_) => {
+                self.grid[(wall_x, wall_y)] = Cell::Path(PathType::Empty);
+                true
+            }
+            _ => false, // Wall already removed
+        }
     }
 }
 
