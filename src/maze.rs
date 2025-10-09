@@ -129,6 +129,10 @@ impl Maze {
         self.width
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.width == 0 && self.height == 0
+    }
+
     /// Renders the maze to the terminal.
     pub fn render(&self) -> std::io::Result<()> {
         queue!(

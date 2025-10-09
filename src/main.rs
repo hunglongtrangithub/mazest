@@ -22,6 +22,7 @@ fn main() -> std::io::Result<()> {
 
     let mut maze = maze::Maze::new(width, height);
     maze.render()?;
-    generators::prim::randomized_prim(&mut maze);
+    // generators::prim::randomized_prim(&mut maze);
+    generators::dfs::randomized_dfs(&mut maze);
     Ok(())
 }
