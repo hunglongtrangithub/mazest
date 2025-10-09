@@ -3,21 +3,21 @@ use rand_set::RandSetDefault;
 
 use crate::maze::{Cell, Maze};
 /// Get neighbors of a cell.
-/// A neighbor is considered a cell that is two steps away in the cardinal directions (up, down, left, right).
-fn get_neighbors(coord: (u16, u16), maze: &Maze) -> impl Iterator<Item = (u16, u16)> {
+/// A neighbor is considered a cell that is one step away in the cardinal directions (up, down, left, right).
+fn get_neighbors(coord: (u8, u8), maze: &Maze) -> impl Iterator<Item = (u8, u8)> {
     let (x, y) = coord;
 
     [
         // NOTE: This way of handling underflow/overflow is overflow-safe.
-        // When x < 2 or y < 2, set x - 2 or y - 2 to u16::MAX to avoid underflow,
+        // When x < 1 or y < 1, set x - 1 or y - 1 to u8::MAX to avoid underflow,
         // and automatically filter it out in the comparison.
-        // When x + 2 or y + 2 exceeds u16::MAX, set it to u16::MAX to avoid overflow,
-        // and automatically filter it out in the comparison (as the largest index numerically
-        // possible is u16::MAX - 1, while the largest dimension numerically possible is u16::MAX).
-        (x.checked_sub(2).unwrap_or(u16::MAX), y),
-        (x.saturating_add(2), y),
-        (x, y.checked_sub(2).unwrap_or(u16::MAX)),
-        (x, y.saturating_add(2)),
+        // When x + 1 or y + 1 exceeds u8::MAX, set it to u8::MAX to avoid overflow,
+        // and automatically filter it out in the comparison (as the largest maze index numerically
+        // possible is u8::MAX - 1, while the largest dimension numerically possible is u8::MAX).
+        (x.checked_sub(1).unwrap_or(u8::MAX), y),
+        (x.saturating_add(1), y),
+        (x, y.checked_sub(1).unwrap_or(u8::MAX)),
+        (x, y.saturating_add(1)),
     ]
     .into_iter()
     .filter(|&(nx, ny)| nx < maze.width() && ny < maze.height())
@@ -25,10 +25,6 @@ fn get_neighbors(coord: (u16, u16), maze: &Maze) -> impl Iterator<Item = (u16, u
 
 /// Requires the maze to be at least 3x3.
 pub fn randomized_prim(maze: &mut Maze) {
-    if maze.width() < 3 || maze.height() < 3 {
-        return;
-    }
-
     let mut rng = StdRng::seed_from_u64(0);
 
     // Initialize the maze with walls
@@ -36,15 +32,16 @@ pub fn randomized_prim(maze: &mut Maze) {
         (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::Wall);
     });
 
-    // Initialize the starting point. Ensure the coordinates are odd.
-    let start: (u16, u16) = (
-        rng.random_range(1..maze.width() - 1) | 1,
-        rng.random_range(1..maze.height() - 1) | 1,
+    // Initialize the starting point
+    let start: (u8, u8) = (
+        rng.random_range(0..maze.width()),
+        rng.random_range(0..maze.height()),
     );
     maze[start] = Cell::Empty;
 
+    // Get the neighbors of the starting point and add them to the frontier set
+    // Currently, all neighbors are walls at this point
     let mut frontiers = get_neighbors(start, maze)
-        // Technically, all neighbors are walls at this point
         .filter(|&coord| maze[coord] == Cell::Wall)
         .collect::<RandSetDefault<_>>();
 
@@ -70,20 +67,9 @@ pub fn randomized_prim(maze: &mut Maze) {
             let neighbor = empty_neighbors[neighbor_index];
 
             // Carve a passage between the frontier and the neighbor
-            let passage = (
-                if frontier.0 > neighbor.0 {
-                    neighbor.0 + (frontier.0 - neighbor.0) / 2
-                } else {
-                    frontier.0 + (neighbor.0 - frontier.0) / 2
-                },
-                if frontier.1 > neighbor.1 {
-                    neighbor.1 + (frontier.1 - neighbor.1) / 2
-                } else {
-                    frontier.1 + (neighbor.1 - frontier.1) / 2
-                },
-            );
+            maze.remove_wall(frontier, neighbor);
+            // Mark the frontier cell as part of the maze
             maze[frontier] = Cell::Empty;
-            maze[passage] = Cell::Empty;
 
             maze.render().ok();
 
