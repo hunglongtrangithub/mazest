@@ -2,8 +2,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use rand_set::RandSetDefault;
 
 use crate::generators::get_neighbors;
-use crate::maze::Maze;
-use crate::maze::cell::{Cell, PathType, WallType};
+use crate::maze::{Cell, Maze, Orientation, PathType, WallType};
 
 /// Requires the maze to be at least 3x3.
 pub fn randomized_prim(maze: &mut Maze) {
@@ -50,7 +49,21 @@ pub fn randomized_prim(maze: &mut Maze) {
             let neighbor = empty_neighbors[neighbor_index];
 
             // Carve a passage between the frontier and the neighbor
-            maze.remove_wall(frontier, neighbor);
+            let (from, orientation) = if frontier.0 == neighbor.0 {
+                // Same column, so the wall is horizontal
+                (
+                    std::cmp::min_by_key(frontier, neighbor, |c| c.1),
+                    Orientation::Horizontal,
+                )
+            } else {
+                // Same row, so the wall is vertical
+                (
+                    std::cmp::min_by_key(frontier, neighbor, |c| c.0),
+                    Orientation::Vertical,
+                )
+            };
+            maze.remove_wall_cell_after(from, orientation);
+
             // Mark the frontier cell as part of the maze
             maze[frontier] = Cell::Path(PathType::Empty);
 

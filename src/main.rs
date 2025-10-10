@@ -27,6 +27,7 @@ fn main() -> std::io::Result<()> {
     println!("Select maze generation algorithm:");
     println!("1. Randomized Depth-First Search (DFS)");
     println!("2. Prim's Algorithm");
+    println!("3. Recursive Division");
     std::io::stdin().read_line(&mut input)?;
     match input.trim() {
         "1" => {
@@ -37,8 +38,12 @@ fn main() -> std::io::Result<()> {
             println!("Generating maze using Prim's Algorithm...");
             generators::prim::randomized_prim(&mut maze);
         }
+        "3" => {
+            println!("Generating maze using Recursive Division...");
+            generators::recur_div::recursive_division(&mut maze);
+        }
         _ => {
-            eprintln!("Invalid selection. Please enter 1 or 2.");
+            eprintln!("Invalid selection.");
             return Ok(());
         }
     }

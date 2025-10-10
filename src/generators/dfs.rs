@@ -1,5 +1,4 @@
-use crate::maze::Maze;
-use crate::maze::cell::{Cell, PathType, WallType};
+use crate::maze::{Cell, Maze, Orientation, PathType, WallType};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::generators::get_neighbors;
@@ -33,7 +32,21 @@ pub fn randomized_dfs(maze: &mut Maze) {
 
         if !neighbors.is_empty() {
             let neighbor = neighbors[rng.random_range(0..neighbors.len())];
-            maze.remove_wall(cell, neighbor);
+            let (from, orientation) = if cell.0 == neighbor.0 {
+                // Same column, so the wall is horizontal
+                (
+                    std::cmp::min_by_key(cell, neighbor, |c| c.1),
+                    Orientation::Horizontal,
+                )
+            } else {
+                // Same row, so the wall is vertical
+                (
+                    std::cmp::min_by_key(cell, neighbor, |c| c.0),
+                    Orientation::Vertical,
+                )
+            };
+            maze.remove_wall_cell_after(from, orientation);
+
             maze[neighbor] = Cell::Path(PathType::Empty);
             maze.render().ok();
             // Put the cell back first so we can look at another neighbor  of this cell later

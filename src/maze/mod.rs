@@ -3,8 +3,13 @@ mod grid;
 
 use crossterm::execute;
 
-use cell::{Cell, PathType, WallType};
+pub use cell::{Cell, PathType, WallType};
 use grid::Grid;
+
+pub enum Orientation {
+    Horizontal,
+    Vertical,
+}
 
 pub struct Maze {
     grid: Grid,
@@ -14,6 +19,7 @@ pub struct Maze {
 
 impl Maze {
     /// Creates a new maze with the given width and height.
+    /// The maze is initialized with walls, and the internal grid is sized to accommodate walls between cells.
     pub fn new(width: u8, height: u8) -> Self {
         // n cells in each dimension -> n + 1 walls -> 2n + 1 total
         let grid_height = height as u16 * 2 + 1;
@@ -46,6 +52,7 @@ impl Maze {
         self.width
     }
 
+    /// Checks if the maze is empty (zero width and height).
     pub fn is_empty(&self) -> bool {
         self.width == 0 && self.height == 0
     }
@@ -76,34 +83,123 @@ impl Maze {
         coord.0 < self.width && coord.1 < self.height
     }
 
-    /// Checks if two coordinates are adjacent in the maze (horizontally or vertically).
-    fn are_adjacent(&self, a: (u8, u8), b: (u8, u8)) -> bool {
-        let dx = if a.0 > b.0 { a.0 - b.0 } else { b.0 - a.0 };
-        let dy = if a.1 > b.1 { a.1 - b.1 } else { b.1 - a.1 };
-        (dx == 1 && dy == 0) || (dx == 0 && dy == 1)
+    /// Removes the wall adjacent to the given cell in the specified direction.
+    ///
+    /// # Arguments
+    /// * `from` - The cell coordinate (x, y) to remove a wall from
+    /// * `orientation` - The direction to move from the cell:
+    ///   - `Horizontal`: Removes the wall to the right of the cell (vertical wall between `from` and `(from.0+1, from.1)`)
+    ///   - `Vertical`: Removes the wall below the cell (horizontal wall between `from` and `(from.0, from.1+1)`)
+    ///
+    /// # Returns
+    /// `true` if a wall was removed, `false` if no wall existed at that position
+    ///
+    /// # Panics
+    /// * If `from` is out of bounds
+    /// * If `from` is in the rightmost column and `orientation` is `Vertical`
+    /// * If `from` is in the bottommost row and `orientation` is `Horizontal`
+    pub fn remove_wall_cell_after(&mut self, from: (u8, u8), orientation: Orientation) -> bool {
+        if !self.is_in_bounds(from) {
+            panic!("The given coordinate is out of bounds");
+        }
+        let wall_coord = match orientation {
+            Orientation::Horizontal => {
+                if from.1 + 1 >= self.height {
+                    panic!("Cannot remove wall after the bottommost cell");
+                }
+                (from.0 as u16 * 2 + 1, from.1 as u16 * 2 + 2)
+            }
+            Orientation::Vertical => {
+                if from.0 + 1 >= self.width {
+                    panic!("Cannot remove wall after the rightmost cell");
+                }
+                (from.0 as u16 * 2 + 2, from.1 as u16 * 2 + 1)
+            }
+        };
+        if self.grid[wall_coord] == Cell::Wall(WallType::Block) {
+            self.grid[wall_coord] = Cell::Path(PathType::Empty);
+            true
+        } else {
+            false
+        }
     }
 
-    /// Removes the wall between two adjacent cells a and b.
-    pub fn remove_wall(&mut self, a: (u8, u8), b: (u8, u8)) -> bool {
-        // Assert that a and b are in bounds and adjacent
-        assert!(self.is_in_bounds(a), "Coordinate a is out of bounds");
-        assert!(self.is_in_bounds(b), "Coordinate b is out of bounds");
-        assert!(
-            self.are_adjacent(a, b),
-            "Coordinates a and b are not adjacent"
-        );
-
-        // Calculate the wall position in the grid
-        // Quick Math :)
-        let wall_x = a.0 as u16 + b.0 as u16 + 1;
-        let wall_y = a.1 as u16 + b.1 as u16 + 1;
-        match self.grid[(wall_x, wall_y)] {
-            Cell::Wall(_) => {
-                self.grid[(wall_x, wall_y)] = Cell::Path(PathType::Empty);
-                true
+    /// Inserts a line of walls after the specified row or column, within a given range.
+    ///
+    /// This function creates a wall line that spans from `start` to `end` (inclusive) in the
+    /// perpendicular direction to the wall orientation.
+    ///
+    /// # Arguments
+    /// * `from` - The row or column index to insert walls after
+    /// * `start` - The starting cell index for the wall line (inclusive)
+    /// * `end` - The ending cell index for the wall line (inclusive)
+    /// * `orientation` - Determines which type of wall line to insert:
+    ///   - `Horizontal`: Inserts a horizontal wall line after row `from` (between rows `from` and `from+1`),
+    ///     spanning from column `start` to column `end`
+    ///   - `Vertical`: Inserts a vertical wall line after column `from` (between columns `from` and `from+1`),
+    ///     spanning from row `start` to row `end`
+    ///
+    /// # Panics
+    /// * If `from >= height - 1` and `orientation` is `Horizontal` (no row below to separate)
+    /// * If `from >= width - 1` and `orientation` is `Vertical` (no column to the right to separate)
+    /// * If `start` or `end` is out of bounds (>= width for Horizontal, >= height for Vertical)
+    ///
+    pub fn insert_wall_line_after(
+        &mut self,
+        from: u8,
+        start: u8,
+        end: u8,
+        orientation: Orientation,
+    ) {
+        match orientation {
+            Orientation::Horizontal => {
+                if from + 1 >= self.height {
+                    panic!("Cannot insert wall line after the bottommost row");
+                }
+                if start >= self.width || end >= self.width {
+                    panic!(
+                        "The range for inserting walls (start={}, end={}) is out of bounds",
+                        start, end
+                    );
+                }
+                let y_wall = from as u16 * 2 + 2;
+                let start = start as u16 * 2 + 1;
+                let end = end as u16 * 2 + 1;
+                (start..=end).for_each(|x| {
+                    self.grid[(x, y_wall)] = Cell::Wall(WallType::Block);
+                });
             }
-            _ => false, // Wall already removed
+            Orientation::Vertical => {
+                if from + 1 >= self.width {
+                    panic!("Cannot insert wall line after the rightmost column");
+                }
+                if start >= self.height || end >= self.height {
+                    panic!(
+                        "The range for inserting walls (start={}, end={}) is out of bounds",
+                        start, end
+                    );
+                }
+                let x_wall = from as u16 * 2 + 2;
+                let start = start as u16 * 2 + 1;
+                let end = end as u16 * 2 + 1;
+                (start..=end).for_each(|y| {
+                    self.grid[(x_wall, y)] = Cell::Wall(WallType::Block);
+                });
+            }
         }
+    }
+
+    /// Clears all existing walls within the maze. Boundary walls are preserved.
+    pub fn clear_walls(&mut self) {
+        (0..self.grid.height()).for_each(|y| {
+            (0..self.grid.width()).for_each(|x| {
+                // Ignore boundary walls
+                if x == 0 || y == 0 || x == self.grid.width() - 1 || y == self.grid.height() - 1 {
+                    return;
+                }
+                self.grid[(x, y)] = Cell::Path(PathType::Empty);
+            });
+        });
     }
 }
 
@@ -136,9 +232,9 @@ mod tests {
     #[test]
     fn test_remove_wall() {
         let mut maze = Maze::new(5, 5);
-        assert!(maze.remove_wall((1, 1), (1, 2)));
+        assert!(maze.remove_wall_cell_after((1, 1), Orientation::Vertical));
         // Trying to remove the same wall again should return false
-        assert!(!maze.remove_wall((1, 1), (1, 2)));
+        assert!(!maze.remove_wall_cell_after((1, 1), Orientation::Vertical));
         // Check that the wall has been removed in the grid
         assert_eq!(maze.grid[(3, 5)], Cell::Path(PathType::Empty));
     }
@@ -150,14 +246,5 @@ mod tests {
         assert!(!maze.is_in_bounds((0, 5)));
         assert!(!maze.is_in_bounds((5, 0)));
         assert!(maze.is_in_bounds((4, 4)));
-    }
-
-    #[test]
-    fn test_are_adjacent() {
-        let maze = Maze::new(5, 5);
-        assert!(maze.are_adjacent((1, 1), (1, 2)));
-        assert!(maze.are_adjacent((1, 1), (2, 1)));
-        assert!(!maze.are_adjacent((1, 1), (2, 2)));
-        assert!(!maze.are_adjacent((0, 0), (2, 0)));
     }
 }

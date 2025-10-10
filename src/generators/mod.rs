@@ -1,5 +1,6 @@
 pub mod dfs;
 pub mod prim;
+pub mod recur_div;
 
 use crate::maze::Maze;
 // TODO: Add Kruskal's and Recursive Division generators

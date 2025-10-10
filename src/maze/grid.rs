@@ -15,6 +15,15 @@ impl Grid {
             height,
         }
     }
+
+    pub fn height(&self) -> u16 {
+        self.height
+    }
+
+    pub fn width(&self) -> u16 {
+        self.width
+    }
+
     fn ravel_index(&self, x: u16, y: u16) -> usize {
         // Overflow-safe since width and height are u16 (assuming usize is at least 32 bits)
         y as usize * self.width as usize + x as usize

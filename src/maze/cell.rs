@@ -1,5 +1,6 @@
 use crossterm::style::{Color, Stylize};
 use std::fmt;
+
 #[derive(Debug, Clone, PartialEq)]
 /// Represents a cell in the maze, which can be either a path or a wall.
 pub enum Cell {
@@ -33,7 +34,7 @@ impl fmt::Display for Cell {
                 PathType::Goal => "G ".with(Color::Red),
             },
             Cell::Wall(wall) => match wall {
-                WallType::Block => "# ".with(Color::White),
+                WallType::Block => "❌".with(Color::White),
                 WallType::Marked => "+ ".with(Color::Magenta),
             },
         };
