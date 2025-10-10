@@ -1,16 +1,16 @@
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::Rng;
 use rand_set::RandSetDefault;
 
-use crate::generators::get_neighbors;
+use crate::generators::{get_neighbors, get_rng};
 use crate::maze::{Cell, Maze, Orientation, PathType, WallType};
 
 /// Requires the maze to be at least 3x3.
-pub fn randomized_prim(maze: &mut Maze) {
+pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
     if maze.is_empty() {
         return;
     }
 
-    let mut rng = StdRng::seed_from_u64(0);
+    let mut rng = get_rng(seed);
 
     // Initialize the maze with walls
     (0..maze.height())
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn test_randomized_prim() {
         let mut maze = Maze::new(7, 7);
-        randomized_prim(&mut maze);
+        randomized_prim(&mut maze, None);
         // Check that the start cell is empty
         assert_eq!(maze[(1, 1)], Cell::Path(PathType::Empty));
         // Check that there are some empty cells in the maze

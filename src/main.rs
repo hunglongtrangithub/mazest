@@ -1,3 +1,5 @@
+use crate::generators::generate_maze;
+
 mod generators;
 mod maze;
 
@@ -25,27 +27,20 @@ fn main() -> std::io::Result<()> {
     // Let user select the algorithm
     input.clear();
     println!("Select maze generation algorithm:");
-    println!("1. Randomized Depth-First Search (DFS)");
-    println!("2. Prim's Algorithm");
-    println!("3. Recursive Division");
+    println!("1. {}", generators::Generator::Dfs);
+    println!("2. {}", generators::Generator::Prim);
+    println!("3. {}", generators::Generator::RecurDiv);
     std::io::stdin().read_line(&mut input)?;
-    match input.trim() {
-        "1" => {
-            println!("Generating maze using Randomized DFS...");
-            generators::dfs::randomized_dfs(&mut maze);
-        }
-        "2" => {
-            println!("Generating maze using Prim's Algorithm...");
-            generators::prim::randomized_prim(&mut maze);
-        }
-        "3" => {
-            println!("Generating maze using Recursive Division...");
-            generators::recur_div::recursive_division(&mut maze);
-        }
+    let generator = match input.trim() {
+        "1" => generators::Generator::Dfs,
+        "2" => generators::Generator::Prim,
+        "3" => generators::Generator::RecurDiv,
         _ => {
             eprintln!("Invalid selection.");
             return Ok(());
         }
-    }
+    };
+    // Generate the maze using the selected algorithm
+    generate_maze(&mut maze, generator, None);
     Ok(())
 }

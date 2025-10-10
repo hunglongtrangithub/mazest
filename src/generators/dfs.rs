@@ -1,14 +1,17 @@
-use crate::maze::{Cell, Maze, Orientation, PathType, WallType};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use crate::{
+    generators::get_rng,
+    maze::{Cell, Maze, Orientation, PathType, WallType},
+};
+use rand::Rng;
 
 use crate::generators::get_neighbors;
 
-pub fn randomized_dfs(maze: &mut Maze) {
+pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
     if maze.is_empty() {
         return;
     }
 
-    let mut rng = StdRng::seed_from_u64(0);
+    let mut rng = get_rng(seed);
 
     // Initialize the maze with walls
     (0..maze.height())

@@ -1,9 +1,15 @@
-pub mod dfs;
-pub mod prim;
-pub mod recur_div;
+use rand::{SeedableRng, rngs::StdRng};
+
+mod dfs;
+mod prim;
+mod recur_div;
+
+pub use dfs::randomized_dfs;
+pub use prim::randomized_prim;
+pub use recur_div::recursive_division;
 
 use crate::maze::Maze;
-// TODO: Add Kruskal's and Recursive Division generators
+// TODO: Add Kruskal's generator
 
 /// Get neighbors of a cell.
 /// A neighbor is considered a cell that is one step away in the cardinal directions (up, down, left, right).
@@ -30,4 +36,36 @@ fn get_neighbors(coord: (u8, u8), maze: &Maze) -> impl Iterator<Item = (u8, u8)>
     neighbors
         .into_iter()
         .filter(|(nx, ny)| *nx < maze.width() && *ny < maze.height())
+}
+
+/// Get a random number generator, optionally seeded for reproducibility.
+fn get_rng(seed: Option<u64>) -> StdRng {
+    match seed {
+        Some(s) => StdRng::seed_from_u64(s),
+        None => StdRng::from_os_rng(),
+    }
+}
+
+pub enum Generator {
+    Dfs,
+    Prim,
+    RecurDiv,
+}
+
+impl std::fmt::Display for Generator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Generator::Dfs => write!(f, "Randomized Depth-First Search (DFS)"),
+            Generator::Prim => write!(f, "Prim's Algorithm"),
+            Generator::RecurDiv => write!(f, "Recursive Division"),
+        }
+    }
+}
+
+pub fn generate_maze(maze: &mut Maze, generator: Generator, seed: Option<u64>) {
+    match generator {
+        Generator::Dfs => randomized_dfs(maze, seed),
+        Generator::Prim => randomized_prim(maze, seed),
+        Generator::RecurDiv => recursive_division(maze, seed),
+    }
 }

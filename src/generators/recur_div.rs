@@ -1,7 +1,10 @@
-use crate::maze::{Maze, Orientation};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use crate::{
+    generators::get_rng,
+    maze::{Maze, Orientation},
+};
+use rand::{Rng, rngs::StdRng};
 
-pub fn recursive_division(maze: &mut Maze) {
+pub fn recursive_division(maze: &mut Maze, seed: Option<u64>) {
     if maze.is_empty() {
         return;
     }
@@ -10,7 +13,7 @@ pub fn recursive_division(maze: &mut Maze) {
     maze.clear_walls();
 
     // Initialize the RNG
-    let mut rng = StdRng::seed_from_u64(0);
+    let mut rng = get_rng(seed);
 
     // Start the recursive division
     divide(maze, (0, 0), maze.width(), maze.height(), &mut rng);
