@@ -194,10 +194,23 @@ impl Maze {
         (0..self.grid.height()).for_each(|y| {
             (0..self.grid.width()).for_each(|x| {
                 // Ignore boundary walls
-                if x == 0 || y == 0 || x == self.grid.width() - 1 || y == self.grid.height() - 1 {
+                if self.grid.is_boundary(x, y) {
                     return;
                 }
                 self.grid[(x, y)] = Cell::Path(PathType::Empty);
+            });
+        });
+    }
+
+    /// Fills all empty paths within the maze with walls. Boundary walls are preserved.
+    pub fn fill_walls(&mut self) {
+        (0..self.grid.height()).for_each(|y| {
+            (0..self.grid.width()).for_each(|x| {
+                // Ignore boundary walls
+                if self.grid.is_boundary(x, y) {
+                    return;
+                }
+                self.grid[(x, y)] = Cell::Wall(WallType::Block);
             });
         });
     }

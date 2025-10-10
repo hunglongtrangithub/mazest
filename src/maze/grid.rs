@@ -24,6 +24,10 @@ impl Grid {
         self.width
     }
 
+    pub fn is_boundary(&self, x: u16, y: u16) -> bool {
+        x == 0 || y == 0 || x == self.width - 1 || y == self.height - 1
+    }
+
     fn ravel_index(&self, x: u16, y: u16) -> usize {
         // Overflow-safe since width and height are u16 (assuming usize is at least 32 bits)
         y as usize * self.width as usize + x as usize
