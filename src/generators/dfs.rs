@@ -4,7 +4,7 @@ use crate::{
 };
 use rand::Rng;
 
-use crate::generators::get_neighbors;
+use crate::maze::get_neighbors;
 
 pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
     if maze.is_empty() {
@@ -15,7 +15,7 @@ pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
 
     // Initialize the maze with walls
     (0..maze.height())
-        .for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::Wall(WallType::Block)));
+        .for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::Wall(WallType::Wall)));
 
     // Initialize the starting point
     let start: (u8, u8) = (
@@ -30,7 +30,7 @@ pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
 
     while let Some(cell) = stack.pop() {
         let neighbors = get_neighbors(cell, maze)
-            .filter(|&c| maze[c] == Cell::Wall(WallType::Block))
+            .filter(|&c| maze[c] == Cell::Wall(WallType::Wall))
             .collect::<Vec<_>>();
 
         if !neighbors.is_empty() {

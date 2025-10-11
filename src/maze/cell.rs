@@ -20,8 +20,8 @@ pub enum PathType {
 #[derive(Debug, Clone, PartialEq)]
 /// Represents different types of wall cells in the maze.
 pub enum WallType {
-    Block,
-    Marked,
+    Wall,
+    Mark,
 }
 
 impl fmt::Display for Cell {
@@ -34,8 +34,8 @@ impl fmt::Display for Cell {
                 PathType::Goal => "G ".with(Color::Red),
             },
             Cell::Wall(wall) => match wall {
-                WallType::Block => "❌".with(Color::White),
-                WallType::Marked => "+ ".with(Color::Magenta),
+                WallType::Wall => "⬜".with(Color::White),
+                WallType::Mark => "🟪".with(Color::Magenta),
             },
         };
         write!(f, "{}", styled_symbol)

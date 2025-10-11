@@ -1,8 +1,8 @@
 use rand::Rng;
 use rand_set::RandSetDefault;
 
-use crate::generators::{get_neighbors, get_rng};
-use crate::maze::{Cell, Maze, Orientation, PathType, WallType};
+use crate::generators::get_rng;
+use crate::maze::{Cell, Maze, Orientation, PathType, WallType, get_neighbors};
 
 /// Requires the maze to be at least 3x3.
 pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
@@ -14,7 +14,7 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
 
     // Initialize the maze with walls
     (0..maze.height())
-        .for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::Wall(WallType::Block)));
+        .for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::Wall(WallType::Wall)));
 
     // Initialize the starting point
     let start: (u8, u8) = (
@@ -26,12 +26,12 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
     // Get the neighbors of the starting point and add them to the frontier set
     // Currently, all neighbors are walls at this point
     let mut frontiers = get_neighbors(start, maze)
-        .filter(|&coord| maze[coord] == Cell::Wall(WallType::Block))
+        .filter(|&coord| maze[coord] == Cell::Wall(WallType::Wall))
         .collect::<RandSetDefault<_>>();
     // Mark all frontier cells as marked in the maze for visualization
     frontiers
         .iter()
-        .for_each(|&coord| maze[coord] = Cell::Wall(WallType::Marked));
+        .for_each(|&coord| maze[coord] = Cell::Wall(WallType::Mark));
 
     // Pick a random frontier cell
     while let Some(&frontier) = frontiers.get_rand() {
@@ -71,13 +71,13 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
 
             // Add the neighbors of the frontier cell that are walls to the frontier set
             let neighbors_to_mark = get_neighbors(frontier, maze)
-                .filter(|&coord| maze[coord] == Cell::Wall(WallType::Block))
+                .filter(|&coord| maze[coord] == Cell::Wall(WallType::Wall))
                 .collect::<Vec<_>>();
 
             for coord in neighbors_to_mark {
                 // Only mark the cell if it hasn't been added to the frontier set before
                 if frontiers.insert(coord) {
-                    maze[coord] = Cell::Wall(WallType::Marked);
+                    maze[coord] = Cell::Wall(WallType::Mark);
                 }
             }
         }
@@ -112,7 +112,7 @@ mod tests {
         assert!(
             maze.grid()
                 .iter()
-                .any(|cell| *cell == Cell::Wall(WallType::Block))
+                .any(|cell| *cell == Cell::Wall(WallType::Wall))
         );
     }
 }
