@@ -1,6 +1,6 @@
 use crate::{
     generators::get_rng,
-    maze::{Cell, Maze, Orientation, PathType},
+    maze::{Cell, Maze, Orientation},
 };
 use rand::seq::SliceRandom;
 
@@ -65,7 +65,7 @@ pub fn randomized_kruskal(maze: &mut Maze, seed: Option<u64>) {
 
     maze.fill_walls();
     (0..height).for_each(|y| {
-        (0..width).for_each(|x| maze[(x, y)] = Cell::Path(PathType::Empty));
+        (0..width).for_each(|x| maze[(x, y)] = Cell::PATH);
     });
     maze.render().ok();
 

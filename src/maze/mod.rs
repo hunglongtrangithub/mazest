@@ -3,7 +3,7 @@ mod grid;
 
 use crossterm::execute;
 
-pub use cell::{Cell, PathType, WallType};
+pub use cell::{Cell, PathType};
 use grid::Grid;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -26,13 +26,13 @@ impl Maze {
         let grid_height = height as u16 * 2 + 1;
         let grid_width = width as u16 * 2 + 1;
         let mut maze = Maze {
-            grid: Grid::new(grid_width, grid_height, Cell::Wall(WallType::Wall)),
+            grid: Grid::new(grid_width, grid_height, Cell::WALL),
             width,
             height,
         };
         (0..height).for_each(|y| {
             (0..width).for_each(|x| {
-                maze[(x, y)] = Cell::Path(PathType::Empty);
+                maze[(x, y)] = Cell::PATH;
             });
         });
         maze
@@ -117,8 +117,8 @@ impl Maze {
                 (from.0 as u16 * 2 + 2, from.1 as u16 * 2 + 1)
             }
         };
-        if self.grid[wall_coord] == Cell::Wall(WallType::Wall) {
-            self.grid[wall_coord] = Cell::Path(PathType::Empty);
+        if matches!(self.grid[wall_coord], Cell::Wall(_)) {
+            self.grid[wall_coord] = Cell::PATH;
             true
         } else {
             false
@@ -167,7 +167,7 @@ impl Maze {
                 let start = start as u16 * 2 + 1;
                 let end = end as u16 * 2 + 1;
                 (start..=end).for_each(|x| {
-                    self.grid[(x, y_wall)] = Cell::Wall(WallType::Wall);
+                    self.grid[(x, y_wall)] = Cell::WALL;
                 });
             }
             Orientation::Vertical => {
@@ -184,7 +184,7 @@ impl Maze {
                 let start = start as u16 * 2 + 1;
                 let end = end as u16 * 2 + 1;
                 (start..=end).for_each(|y| {
-                    self.grid[(x_wall, y)] = Cell::Wall(WallType::Wall);
+                    self.grid[(x_wall, y)] = Cell::WALL;
                 });
             }
         }
@@ -213,7 +213,7 @@ impl Maze {
                 (from.0 as u16 * 2 + 2, from.1 as u16 * 2 + 1)
             }
         };
-        self.grid[wall_coord] == Cell::Wall(WallType::Wall)
+        matches!(self.grid[wall_coord], Cell::Wall(_))
     }
 
     /// Set the wall cell after the specified cell in the given orientation to be a path (removing the wall).
@@ -246,7 +246,7 @@ impl Maze {
                 if self.grid.is_boundary(x, y) {
                     return;
                 }
-                self.grid[(x, y)] = Cell::Path(PathType::Empty);
+                self.grid[(x, y)] = Cell::PATH;
             });
         });
     }
@@ -259,7 +259,7 @@ impl Maze {
                 if self.grid.is_boundary(x, y) {
                     return;
                 }
-                self.grid[(x, y)] = Cell::Wall(WallType::Wall);
+                self.grid[(x, y)] = Cell::WALL;
             });
         });
     }
@@ -312,8 +312,8 @@ mod tests {
     #[test]
     fn test_maze_indexing() {
         let mut maze = Maze::new(5, 5);
-        maze[(2, 3)] = Cell::Path(PathType::Start);
-        assert_eq!(maze[(2, 3)], Cell::Path(PathType::Start));
+        maze[(2, 3)] = Cell::START;
+        assert_eq!(maze[(2, 3)], Cell::START);
     }
 
     #[test]
@@ -323,7 +323,7 @@ mod tests {
         // Trying to remove the same wall again should return false
         assert!(!maze.remove_wall_cell_after((1, 1), Orientation::Vertical));
         // Check that the wall has been removed in the grid
-        assert_eq!(maze.grid[(3, 5)], Cell::Path(PathType::Empty));
+        assert_eq!(maze.grid[(3, 5)], Cell::PATH);
     }
 
     #[test]

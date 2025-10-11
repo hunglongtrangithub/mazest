@@ -11,15 +11,12 @@ pub enum Cell {
 }
 
 impl Cell {
-    /// Checks if the cell is a path type.
-    pub fn is_path(&self) -> bool {
-        matches!(self, Cell::Path(_))
-    }
-
-    /// Checks if the cell is a wall type.
-    pub fn is_wall(&self) -> bool {
-        matches!(self, Cell::Wall(_))
-    }
+    pub const PATH: Cell = Cell::Path(PathType::Empty);
+    pub const WALL: Cell = Cell::Wall(WallType::Wall);
+    pub const MARK: Cell = Cell::Wall(WallType::Mark);
+    pub const GOAL: Cell = Cell::Path(PathType::Goal);
+    pub const START: Cell = Cell::Path(PathType::Start);
+    pub const VISITED: Cell = Cell::Path(PathType::Visited);
 }
 
 #[derive(Debug, Clone, PartialEq)]

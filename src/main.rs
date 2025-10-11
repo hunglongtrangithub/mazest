@@ -2,7 +2,7 @@ mod generators;
 mod maze;
 mod solvers;
 
-use crate::generators::generate_maze;
+use crate::{generators::generate_maze, maze::Cell};
 
 fn main() -> std::io::Result<()> {
     let mut input = String::new();
@@ -52,8 +52,8 @@ fn main() -> std::io::Result<()> {
 
     let start = (0, 0);
     let goal = (maze.width() - 1, maze.height() - 1);
-    maze[start] = maze::Cell::Path(maze::PathType::Start);
-    maze[goal] = maze::Cell::Path(maze::PathType::Goal);
+    maze[start] = Cell::START;
+    maze[goal] = Cell::GOAL;
 
     println!("Select maze solving algorithm:");
     println!("1. DFS");

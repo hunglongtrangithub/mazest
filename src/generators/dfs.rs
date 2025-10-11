@@ -1,6 +1,6 @@
 use crate::{
     generators::get_rng,
-    maze::{Cell, Maze, Orientation, PathType, WallType},
+    maze::{Cell, Maze, Orientation},
 };
 use rand::Rng;
 
@@ -14,15 +14,14 @@ pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
     let mut rng = get_rng(seed);
 
     // Initialize the maze with walls
-    (0..maze.height())
-        .for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::Wall(WallType::Wall)));
+    (0..maze.height()).for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::WALL));
 
     // Initialize the starting point
     let start: (u8, u8) = (
         rng.random_range(0..maze.width()),
         rng.random_range(0..maze.height()),
     );
-    maze[start] = Cell::Path(PathType::Empty);
+    maze[start] = Cell::PATH;
 
     // Initialize the stack with the starting point
     // The stack will keep only path cells
@@ -30,7 +29,7 @@ pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
 
     while let Some(cell) = stack.pop() {
         let neighbors = get_neighbors(cell, maze)
-            .filter(|&c| maze[c] == Cell::Wall(WallType::Wall))
+            .filter(|&c| maze[c] == Cell::WALL)
             .collect::<Vec<_>>();
 
         if !neighbors.is_empty() {
@@ -50,7 +49,7 @@ pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
             };
             maze.remove_wall_cell_after(from, orientation);
 
-            maze[neighbor] = Cell::Path(PathType::Empty);
+            maze[neighbor] = Cell::PATH;
             maze.render().ok();
             // Put the cell back first so we can look at another neighbor  of this cell later
             stack.push(cell);
