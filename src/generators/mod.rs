@@ -5,9 +5,9 @@ mod kruskal;
 mod prim;
 mod recur_div;
 
-pub use dfs::randomized_dfs;
-pub use prim::randomized_prim;
-pub use recur_div::recursive_division;
+use dfs::randomized_dfs;
+use prim::randomized_prim;
+use recur_div::recursive_division;
 
 use crate::{generators::kruskal::randomized_kruskal, maze::Maze};
 // TODO: Add Kruskal's generator

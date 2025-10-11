@@ -50,22 +50,22 @@ fn main() -> std::io::Result<()> {
     // Generate the maze using the selected algorithm
     generate_maze(&mut maze, generator, None);
 
-    let start = (0, 0);
-    let goal = (maze.width() - 1, maze.height() - 1);
-    maze[start] = Cell::START;
-    maze[goal] = Cell::GOAL;
-
     println!("Select maze solving algorithm:");
-    println!("1. DFS");
+    println!("1. {}", solvers::Solver::Dfs);
+    println!("2. {}", solvers::Solver::Bfs);
     input.clear();
     std::io::stdin().read_line(&mut input)?;
-    let goal_reached = match input.trim() {
-        "1" => solvers::dfs::solve_dfs(&mut maze, start, goal),
+    let solver = match input.trim() {
+        "1" => solvers::Solver::Dfs,
+        "2" => solvers::Solver::Bfs,
         _ => {
             eprintln!("Invalid selection.");
             return Ok(());
         }
     };
+
+    // Solve the maze using the selected algorithm
+    let goal_reached = solvers::solve_maze(&mut maze, solver);
     if goal_reached {
         println!("Maze solved! Goal reached.");
     } else {
