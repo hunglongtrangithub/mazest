@@ -6,6 +6,7 @@ use crossterm::execute;
 pub use cell::{Cell, PathType, WallType};
 use grid::Grid;
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum Orientation {
     Horizontal,
     Vertical,
@@ -87,9 +88,9 @@ impl Maze {
     ///
     /// # Arguments
     /// * `from` - The cell coordinate (x, y) to remove a wall from
-    /// * `orientation` - The direction to move from the cell:
-    ///   - `Horizontal`: Removes the wall to the right of the cell (vertical wall between `from` and `(from.0+1, from.1)`)
-    ///   - `Vertical`: Removes the wall below the cell (horizontal wall between `from` and `(from.0, from.1+1)`)
+    /// * `orientation` - The orientation of the wall to remove:
+    ///   - `Vertical`: Removes the wall to the right of the cell (vertical wall between `from` and `(from.0+1, from.1)`)
+    ///   - `Horizontal`: Removes the wall below the cell (horizontal wall between `from` and `(from.0, from.1+1)`)
     ///
     /// # Returns
     /// `true` if a wall was removed, `false` if no wall existed at that position
@@ -189,6 +190,54 @@ impl Maze {
         }
     }
 
+    /// Checks if there is a wall cell after the specified cell in the given orientation.
+    /// `orientation` determines the orientation of the wall to check:
+    /// - `Horizontal`: Checks the wall cell below the specified cell (between `from` and `(from.0, from.1+1)`)
+    /// - `Vertical`: Checks the wall cell to the right of the specified cell (between `from` and `(from.0+1, from.1)`)
+    ///
+    pub fn is_wall_cell_after(&self, from: (u8, u8), orientation: Orientation) -> bool {
+        if !self.is_in_bounds(from) {
+            panic!("The given coordinate is out of bounds");
+        }
+        let wall_coord = match orientation {
+            Orientation::Horizontal => {
+                if from.1 + 1 >= self.height {
+                    panic!("Cannot check wall after the bottommost cell");
+                }
+                (from.0 as u16 * 2 + 1, from.1 as u16 * 2 + 2)
+            }
+            Orientation::Vertical => {
+                if from.0 + 1 >= self.width {
+                    panic!("Cannot check wall after the rightmost cell");
+                }
+                (from.0 as u16 * 2 + 2, from.1 as u16 * 2 + 1)
+            }
+        };
+        self.grid[wall_coord] == Cell::Wall(WallType::Wall)
+    }
+
+    /// Set the wall cell after the specified cell in the given orientation to be a path (removing the wall).
+    /// `orientation` determines the orientation of the path to set:
+    /// - `Vertical`: Sets the path cell below the specified cell (between `from` and `(from.0, from.1+1)`)
+    /// - `Horizontal`: Sets the path cell to the right of the specified cell (between `from` and `(from.0+1, from.1)`)
+    pub fn set_path_cell_after(&mut self, from: (u8, u8), orientation: Orientation) {
+        let wall_coord = match orientation {
+            Orientation::Horizontal => {
+                if from.0 + 1 >= self.width {
+                    panic!("Cannot set path cell after the rightmost cell");
+                }
+                (from.0 as u16 * 2 + 2, from.1 as u16 * 2 + 1)
+            }
+            Orientation::Vertical => {
+                if from.1 + 1 >= self.height {
+                    panic!("Cannot set path cell after the bottommost cell");
+                }
+                (from.0 as u16 * 2 + 1, from.1 as u16 * 2 + 2)
+            }
+        };
+        self.grid[wall_coord] = Cell::Path(PathType::Path(orientation));
+    }
+
     /// Clears all existing walls within the maze. Boundary walls are preserved.
     pub fn clear_walls(&mut self) {
         (0..self.grid.height()).for_each(|y| {
@@ -254,9 +303,7 @@ pub fn get_neighbors(coord: (u8, u8), maze: &Maze) -> impl Iterator<Item = (u8, 
         vec![]
     };
 
-    neighbors
-        .into_iter()
-        .filter(|(nx, ny)| *nx < maze.width() && *ny < maze.height())
+    neighbors.into_iter().filter(move |&c| maze.is_in_bounds(c))
 }
 
 #[cfg(test)]

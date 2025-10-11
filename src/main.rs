@@ -1,7 +1,8 @@
-use crate::generators::generate_maze;
-
 mod generators;
 mod maze;
+mod solvers;
+
+use crate::generators::generate_maze;
 
 fn main() -> std::io::Result<()> {
     let mut input = String::new();
@@ -21,6 +22,10 @@ fn main() -> std::io::Result<()> {
     }
 
     let (width, height) = (dims[0], dims[1]);
+    if width < 2 || height < 2 {
+        eprintln!("Width and height must be at least 2.");
+        return Ok(());
+    }
 
     let mut maze = maze::Maze::new(width, height);
 
@@ -44,5 +49,27 @@ fn main() -> std::io::Result<()> {
     };
     // Generate the maze using the selected algorithm
     generate_maze(&mut maze, generator, None);
+
+    let start = (0, 0);
+    let goal = (maze.width() - 1, maze.height() - 1);
+    maze[start] = maze::Cell::Path(maze::PathType::Start);
+    maze[goal] = maze::Cell::Path(maze::PathType::Goal);
+
+    println!("Select maze solving algorithm:");
+    println!("1. DFS");
+    input.clear();
+    std::io::stdin().read_line(&mut input)?;
+    let goal_reached = match input.trim() {
+        "1" => solvers::dfs::solve_dfs(&mut maze, start, goal),
+        _ => {
+            eprintln!("Invalid selection.");
+            return Ok(());
+        }
+    };
+    if goal_reached {
+        println!("Maze solved! Goal reached.");
+    } else {
+        println!("No path found to the goal.");
+    }
     Ok(())
 }
