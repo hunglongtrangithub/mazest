@@ -73,8 +73,8 @@ impl std::fmt::Display for Solver {
 pub fn solve_maze(maze: &mut Maze, solver: Solver) -> bool {
     let start = (0, 0);
     let goal = (maze.width() - 1, maze.height() - 1);
-    maze[start] = GridCell::START;
-    maze[goal] = GridCell::GOAL;
+    maze.set(start, GridCell::START);
+    maze.set(goal, GridCell::GOAL);
 
     match solver {
         Solver::Dfs => solve_dfs(maze, start, goal),

@@ -14,14 +14,15 @@ pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
     let mut rng = get_rng(seed);
 
     // Initialize the maze with walls
-    (0..maze.height()).for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = GridCell::WALL));
+    (0..maze.height())
+        .for_each(|y| (0..maze.width()).for_each(|x| maze.set((x, y), GridCell::WALL)));
 
     // Initialize the starting point
     let start: (u8, u8) = (
         rng.random_range(0..maze.width()),
         rng.random_range(0..maze.height()),
     );
-    maze[start] = GridCell::PATH;
+    maze.set(start, GridCell::PATH);
 
     // Initialize the stack with the starting point
     // The stack will keep only path cells
@@ -34,7 +35,7 @@ pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
 
         if !neighbors.is_empty() {
             let neighbor = neighbors[rng.random_range(0..neighbors.len())];
-            maze[neighbor] = GridCell::MARK;
+            maze.set(neighbor, GridCell::MARK);
             maze.render().ok();
 
             let (from, orientation) = if cell.0 == neighbor.0 {
@@ -52,7 +53,7 @@ pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
             };
             maze.remove_wall_cell_after(from, orientation);
 
-            maze[neighbor] = GridCell::PATH;
+            maze.set(neighbor, GridCell::PATH);
             maze.render().ok();
             // Put the cell back first so we can look at another neighbor  of this cell later
             stack.push(cell);

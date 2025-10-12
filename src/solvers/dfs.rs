@@ -8,7 +8,7 @@ pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
         return false;
     }
 
-    maze[start] = GridCell::START;
+    maze.set(start, GridCell::START);
 
     // Stack for DFS
     let mut stack = vec![TrackedCell {
@@ -21,7 +21,7 @@ pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
 
     while let Some(current) = stack.pop() {
         if current.coord == goal {
-            maze[current.coord] = GridCell::GOAL;
+            maze.set(current.coord, GridCell::GOAL);
             // Backtrack to mark the path
             let mut child = Rc::new(current);
             while let Some(parent) = child.parent.as_ref() {
@@ -48,7 +48,7 @@ pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
 
         // Mark the current cell as visited
         if maze[current.coord] != GridCell::START {
-            maze[current.coord] = GridCell::VISITED;
+            maze.set(current.coord, GridCell::VISITED);
         }
         maze.render().ok();
 

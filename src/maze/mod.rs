@@ -33,7 +33,7 @@ impl Maze {
         };
         (0..height).for_each(|y| {
             (0..width).for_each(|x| {
-                maze[(x, y)] = GridCell::PATH;
+                maze.set((x, y), GridCell::PATH);
             });
         });
         maze
@@ -57,6 +57,12 @@ impl Maze {
     /// Checks if the maze is empty (zero width and height).
     pub fn is_empty(&self) -> bool {
         self.width == 0 && self.height == 0
+    }
+
+    /// Sets the cell at the given coordinate to the specified [`GridCell`] value.
+    pub fn set(&mut self, coord: (u8, u8), cell: GridCell) {
+        let grid_coord = (coord.0 as u16 * 2 + 1, coord.1 as u16 * 2 + 1);
+        self.grid.set(grid_coord, cell);
     }
 
     /// Renders the maze to the terminal.
@@ -119,7 +125,7 @@ impl Maze {
             }
         };
         if matches!(self.grid[wall_coord], GridCell::Wall(_)) {
-            self.grid[wall_coord] = GridCell::PATH;
+            self.grid.set(wall_coord, GridCell::PATH);
             true
         } else {
             false
@@ -168,7 +174,7 @@ impl Maze {
                 let start = start as u16 * 2 + 1;
                 let end = end as u16 * 2 + 1;
                 (start..=end).for_each(|x| {
-                    self.grid[(x, y_wall)] = GridCell::WALL;
+                    self.grid.set((x, y_wall), GridCell::WALL);
                 });
             }
             Orientation::Vertical => {
@@ -185,7 +191,7 @@ impl Maze {
                 let start = start as u16 * 2 + 1;
                 let end = end as u16 * 2 + 1;
                 (start..=end).for_each(|y| {
-                    self.grid[(x_wall, y)] = GridCell::WALL;
+                    self.grid.set((x_wall, y), GridCell::WALL);
                 });
             }
         }
@@ -236,7 +242,8 @@ impl Maze {
                 (from.0 as u16 * 2 + 1, from.1 as u16 * 2 + 2)
             }
         };
-        self.grid[wall_coord] = GridCell::Path(PathType::Path(orientation));
+        self.grid
+            .set(wall_coord, GridCell::Path(PathType::Path(orientation)));
     }
 
     /// Clears all existing walls within the maze. Boundary walls are preserved.
@@ -247,7 +254,7 @@ impl Maze {
                 if self.grid.is_boundary(x, y) {
                     return;
                 }
-                self.grid[(x, y)] = GridCell::PATH;
+                self.grid.set((x, y), GridCell::PATH);
             });
         });
     }
@@ -260,7 +267,7 @@ impl Maze {
                 if self.grid.is_boundary(x, y) {
                     return;
                 }
-                self.grid[(x, y)] = GridCell::WALL;
+                self.grid.set((x, y), GridCell::WALL);
             });
         });
     }
@@ -272,13 +279,6 @@ impl std::ops::Index<(u8, u8)> for Maze {
     fn index(&self, index: (u8, u8)) -> &Self::Output {
         let grid_index = (index.0 as u16 * 2 + 1, index.1 as u16 * 2 + 1);
         &self.grid[grid_index]
-    }
-}
-
-impl std::ops::IndexMut<(u8, u8)> for Maze {
-    fn index_mut(&mut self, index: (u8, u8)) -> &mut Self::Output {
-        let grid_index = (index.0 as u16 * 2 + 1, index.1 as u16 * 2 + 1);
-        &mut self.grid[grid_index]
     }
 }
 
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn test_maze_indexing() {
         let mut maze = Maze::new(5, 5);
-        maze[(2, 3)] = GridCell::START;
+        maze.set((2, 3), GridCell::START);
         assert_eq!(maze[(2, 3)], GridCell::START);
     }
 

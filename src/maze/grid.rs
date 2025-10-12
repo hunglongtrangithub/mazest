@@ -33,6 +33,11 @@ impl Grid {
         y as usize * self.width as usize + x as usize
     }
 
+    pub fn set(&mut self, coord: (u16, u16), cell: GridCell) {
+        let idx = self.ravel_index(coord.0, coord.1);
+        self.data[idx] = cell;
+    }
+
     pub fn display(&self) {
         for y in 0..self.height {
             for x in 0..self.width {
@@ -48,11 +53,5 @@ impl std::ops::Index<(u16, u16)> for Grid {
 
     fn index(&self, index: (u16, u16)) -> &Self::Output {
         &self.data[self.ravel_index(index.0, index.1)]
-    }
-}
-
-impl std::ops::IndexMut<(u16, u16)> for Grid {
-    fn index_mut(&mut self, index: (u16, u16)) -> &mut Self::Output {
-        &mut self.data[self.ravel_index(index.0, index.1)]
     }
 }
