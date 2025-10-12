@@ -32,13 +32,13 @@ fn main() -> std::io::Result<()> {
     // Let user select the algorithm
     input.clear();
     println!("Select maze generation algorithm:");
-    println!("1. {}", generators::Generator::Dfs);
+    println!("1. {}", generators::Generator::RecurBacktrack);
     println!("2. {}", generators::Generator::Prim);
     println!("3. {}", generators::Generator::RecurDiv);
     println!("4. {}", generators::Generator::Kruskal);
     std::io::stdin().read_line(&mut input)?;
     let generator = match input.trim() {
-        "1" => generators::Generator::Dfs,
+        "1" => generators::Generator::RecurBacktrack,
         "2" => generators::Generator::Prim,
         "3" => generators::Generator::RecurDiv,
         "4" => generators::Generator::Kruskal,

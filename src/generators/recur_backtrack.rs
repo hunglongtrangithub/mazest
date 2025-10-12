@@ -6,7 +6,7 @@ use rand::Rng;
 
 use crate::maze::get_neighbors;
 
-pub fn randomized_dfs(maze: &mut Maze, seed: Option<u64>) {
+pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
     if maze.is_empty() {
         return;
     }

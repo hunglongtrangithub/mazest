@@ -6,17 +6,18 @@
 //! - Recursive Division
 //! - Kruskal's Algorithm
 //!
+//! All algorithms generate perfect mazes (i.e., mazes without loops and with a unique path between any two points).
 //! Each algorithm can be selected and applied to a [`Maze`] instance.
 
 use rand::{SeedableRng, rngs::StdRng};
 
-mod dfs;
 mod kruskal;
 mod prim;
+mod recur_backtrack;
 mod recur_div;
 
-use dfs::randomized_dfs;
 use prim::randomized_prim;
+use recur_backtrack::recursive_backtrack;
 use recur_div::recursive_division;
 
 use crate::{generators::kruskal::randomized_kruskal, maze::Maze};
@@ -30,7 +31,7 @@ fn get_rng(seed: Option<u64>) -> StdRng {
 }
 
 pub enum Generator {
-    Dfs,
+    RecurBacktrack,
     Prim,
     RecurDiv,
     Kruskal,
@@ -39,7 +40,7 @@ pub enum Generator {
 impl std::fmt::Display for Generator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Generator::Dfs => write!(f, "Randomized Depth-First Search (DFS)"),
+            Generator::RecurBacktrack => write!(f, "Recursive Backtracking"),
             Generator::Prim => write!(f, "Prim's Algorithm"),
             Generator::RecurDiv => write!(f, "Recursive Division"),
             Generator::Kruskal => write!(f, "Kruskal's Algorithm"),
@@ -49,7 +50,7 @@ impl std::fmt::Display for Generator {
 
 pub fn generate_maze(maze: &mut Maze, generator: Generator, seed: Option<u64>) {
     match generator {
-        Generator::Dfs => randomized_dfs(maze, seed),
+        Generator::RecurBacktrack => recursive_backtrack(maze, seed),
         Generator::Prim => randomized_prim(maze, seed),
         Generator::RecurDiv => recursive_division(maze, seed),
         Generator::Kruskal => randomized_kruskal(maze, seed),
