@@ -1,13 +1,17 @@
+use std::cmp::Ordering;
 use std::rc::Rc;
 
+mod astar;
 mod bfs;
 mod dfs;
-// mod dijkstra;
+mod dijkstra;
 
 use crate::GridCell;
 use crate::maze::Maze;
+use astar::solve_astart;
 use bfs::solve_bfs;
 use dfs::solve_dfs;
+use dijkstra::solve_dijkstra;
 
 #[derive(Default)]
 struct TrackedCell {
@@ -21,9 +25,38 @@ struct TrackedCell {
     heuristic_cost: usize,
 }
 
+impl TrackedCell {
+    /// Total cost for A* (traveling cost + heuristic cost)
+    fn total_cost(&self) -> usize {
+        self.traveling_cost + self.heuristic_cost
+    }
+}
+
+impl Eq for TrackedCell {}
+
+impl PartialEq for TrackedCell {
+    fn eq(&self, other: &Self) -> bool {
+        self.total_cost() == other.total_cost()
+    }
+}
+
+impl Ord for TrackedCell {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.total_cost().cmp(&other.total_cost())
+    }
+}
+
+impl PartialOrd for TrackedCell {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 pub enum Solver {
     Dfs,
     Bfs,
+    Dijkstra,
+    AStar,
 }
 
 impl std::fmt::Display for Solver {
@@ -31,6 +64,8 @@ impl std::fmt::Display for Solver {
         match self {
             Solver::Dfs => write!(f, "Depth-First Search (DFS)"),
             Solver::Bfs => write!(f, "Breadth-First Search (BFS)"),
+            Solver::Dijkstra => write!(f, "Dijkstra's Algorithm"),
+            Solver::AStar => write!(f, "A* Search Algorithm"),
         }
     }
 }
@@ -44,5 +79,7 @@ pub fn solve_maze(maze: &mut Maze, solver: Solver) -> bool {
     match solver {
         Solver::Dfs => solve_dfs(maze, start, goal),
         Solver::Bfs => solve_bfs(maze, start, goal),
+        Solver::Dijkstra => solve_dijkstra(maze, start, goal),
+        Solver::AStar => solve_astart(maze, start, goal),
     }
 }

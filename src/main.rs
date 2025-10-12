@@ -30,12 +30,12 @@ fn main() -> std::io::Result<()> {
     let mut maze = maze::Maze::new(width, height);
 
     // Let user select the algorithm
-    input.clear();
     println!("Select maze generation algorithm:");
     println!("1. {}", generators::Generator::RecurBacktrack);
     println!("2. {}", generators::Generator::Prim);
     println!("3. {}", generators::Generator::RecurDiv);
     println!("4. {}", generators::Generator::Kruskal);
+    input.clear();
     std::io::stdin().read_line(&mut input)?;
     let generator = match input.trim() {
         "1" => generators::Generator::RecurBacktrack,
@@ -53,11 +53,15 @@ fn main() -> std::io::Result<()> {
     println!("Select maze solving algorithm:");
     println!("1. {}", solvers::Solver::Dfs);
     println!("2. {}", solvers::Solver::Bfs);
+    println!("3. {}", solvers::Solver::Dijkstra);
+    println!("4. {}", solvers::Solver::AStar);
     input.clear();
     std::io::stdin().read_line(&mut input)?;
     let solver = match input.trim() {
         "1" => solvers::Solver::Dfs,
         "2" => solvers::Solver::Bfs,
+        "3" => solvers::Solver::Dijkstra,
+        "4" => solvers::Solver::AStar,
         _ => {
             eprintln!("Invalid selection.");
             return Ok(());
