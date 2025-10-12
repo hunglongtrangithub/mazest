@@ -1,13 +1,13 @@
-use super::cell::Cell;
+use super::cell::GridCell;
 
 pub struct Grid {
-    pub data: Box<[Cell]>,
+    pub data: Box<[GridCell]>,
     width: u16,
     height: u16,
 }
 
 impl Grid {
-    pub fn new(width: u16, height: u16, cell: Cell) -> Self {
+    pub fn new(width: u16, height: u16, cell: GridCell) -> Self {
         let data = vec![cell; width as usize * height as usize].into_boxed_slice();
         Grid {
             data,
@@ -44,7 +44,7 @@ impl Grid {
 }
 
 impl std::ops::Index<(u16, u16)> for Grid {
-    type Output = Cell;
+    type Output = GridCell;
 
     fn index(&self, index: (u16, u16)) -> &Self::Output {
         &self.data[self.ravel_index(index.0, index.1)]

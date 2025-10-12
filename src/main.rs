@@ -2,7 +2,7 @@ mod generators;
 mod maze;
 mod solvers;
 
-use crate::{generators::generate_maze, maze::Cell};
+use crate::{generators::generate_maze, maze::GridCell};
 
 fn main() -> std::io::Result<()> {
     let mut input = String::new();

@@ -2,7 +2,7 @@ use rand::Rng;
 use rand_set::RandSetDefault;
 
 use crate::generators::get_rng;
-use crate::maze::{Cell, Maze, Orientation, get_neighbors};
+use crate::maze::{GridCell, Maze, Orientation, get_neighbors};
 
 /// Requires the maze to be at least 3x3.
 pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
@@ -13,22 +13,24 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
     let mut rng = get_rng(seed);
 
     // Initialize the maze with walls
-    (0..maze.height()).for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = Cell::WALL));
+    (0..maze.height()).for_each(|y| (0..maze.width()).for_each(|x| maze[(x, y)] = GridCell::WALL));
 
     // Initialize the starting point
     let start: (u8, u8) = (
         rng.random_range(0..maze.width()),
         rng.random_range(0..maze.height()),
     );
-    maze[start] = Cell::PATH;
+    maze[start] = GridCell::PATH;
 
     // Get the neighbors of the starting point and add them to the frontier set
     // Currently, all neighbors are walls at this point
     let mut frontiers = get_neighbors(start, maze)
-        .filter(|&coord| maze[coord] == Cell::WALL)
+        .filter(|&coord| maze[coord] == GridCell::WALL)
         .collect::<RandSetDefault<_>>();
     // Mark all frontier cells as marked in the maze for visualization
-    frontiers.iter().for_each(|&coord| maze[coord] = Cell::MARK);
+    frontiers
+        .iter()
+        .for_each(|&coord| maze[coord] = GridCell::MARK);
 
     // Pick a random frontier cell
     while let Some(&frontier) = frontiers.get_rand() {
@@ -37,7 +39,7 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
 
         // Get the neighbors of the frontier cell that are part of the maze (i.e., not walls)
         let empty_neighbors = get_neighbors(frontier, maze)
-            .filter(|&coord| maze[coord] == Cell::PATH)
+            .filter(|&coord| maze[coord] == GridCell::PATH)
             .collect::<Vec<_>>();
 
         if !empty_neighbors.is_empty() {
@@ -62,19 +64,19 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
             maze.remove_wall_cell_after(from, orientation);
 
             // Mark the frontier cell as part of the maze
-            maze[frontier] = Cell::PATH;
+            maze[frontier] = GridCell::PATH;
 
             maze.render().ok();
 
             // Add the neighbors of the frontier cell that are walls to the frontier set
             let neighbors_to_mark = get_neighbors(frontier, maze)
-                .filter(|&coord| maze[coord] == Cell::WALL)
+                .filter(|&coord| maze[coord] == GridCell::WALL)
                 .collect::<Vec<_>>();
 
             for coord in neighbors_to_mark {
                 // Only mark the cell if it hasn't been added to the frontier set before
                 if frontiers.insert(coord) {
-                    maze[coord] = Cell::MARK;
+                    maze[coord] = GridCell::MARK;
                 }
             }
         }
@@ -84,7 +86,7 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maze::cell::Cell;
+    use crate::maze::cell::GridCell;
 
     #[test]
     fn test_get_neighbors() {
@@ -98,10 +100,10 @@ mod tests {
         let mut maze = Maze::new(7, 7);
         randomized_prim(&mut maze, None);
         // Check that the start cell is empty
-        assert_eq!(maze[(1, 1)], Cell::PATH);
+        assert_eq!(maze[(1, 1)], GridCell::PATH);
         // Check that there are some empty cells in the maze
-        assert!(maze.grid().iter().any(|cell| *cell == Cell::PATH));
+        assert!(maze.grid().iter().any(|cell| *cell == GridCell::PATH));
         // Check that there are some walls in the maze
-        assert!(maze.grid().iter().any(|cell| *cell == Cell::WALL));
+        assert!(maze.grid().iter().any(|cell| *cell == GridCell::WALL));
     }
 }

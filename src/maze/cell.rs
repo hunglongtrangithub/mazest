@@ -4,19 +4,19 @@ use std::fmt;
 use crate::maze::Orientation;
 
 #[derive(Debug, Clone, PartialEq)]
-/// Represents a cell in the maze, which can be either a path or a wall.
-pub enum Cell {
+/// Represents a cell in the grid, which can be either a path or a wall.
+pub enum GridCell {
     Path(PathType),
     Wall(WallType),
 }
 
-impl Cell {
-    pub const PATH: Cell = Cell::Path(PathType::Empty);
-    pub const WALL: Cell = Cell::Wall(WallType::Wall);
-    pub const MARK: Cell = Cell::Wall(WallType::Mark);
-    pub const GOAL: Cell = Cell::Path(PathType::Goal);
-    pub const START: Cell = Cell::Path(PathType::Start);
-    pub const VISITED: Cell = Cell::Path(PathType::Visited);
+impl GridCell {
+    pub const PATH: GridCell = GridCell::Path(PathType::Empty);
+    pub const WALL: GridCell = GridCell::Wall(WallType::Wall);
+    pub const MARK: GridCell = GridCell::Wall(WallType::Mark);
+    pub const GOAL: GridCell = GridCell::Path(PathType::Goal);
+    pub const START: GridCell = GridCell::Path(PathType::Start);
+    pub const VISITED: GridCell = GridCell::Path(PathType::Visited);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,10 +40,10 @@ pub enum WallType {
     Mark,
 }
 
-impl fmt::Display for Cell {
+impl fmt::Display for GridCell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let styled_symbol = match self {
-            Cell::Path(path) => match path {
+            GridCell::Path(path) => match path {
                 PathType::Path(orientation) => match orientation {
                     Orientation::Horizontal => "══".with(Color::Yellow),
                     Orientation::Vertical => "║ ".with(Color::Yellow),
@@ -53,7 +53,7 @@ impl fmt::Display for Cell {
                 PathType::Start => "S ".with(Color::Green),
                 PathType::Goal => "G ".with(Color::Red),
             },
-            Cell::Wall(wall) => match wall {
+            GridCell::Wall(wall) => match wall {
                 WallType::Wall => "⬜".with(Color::White),
                 WallType::Mark => "🟪".with(Color::Magenta),
             },

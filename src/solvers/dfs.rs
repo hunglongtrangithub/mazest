@@ -1,14 +1,14 @@
 use std::rc::Rc;
 
 use super::TrackedCell;
-use crate::maze::{Cell, Maze, Orientation};
+use crate::maze::{GridCell, Maze, Orientation};
 
 pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
     if maze.is_empty() {
         return false;
     }
 
-    maze[start] = Cell::START;
+    maze[start] = GridCell::START;
 
     // Stack for DFS
     let mut stack = vec![TrackedCell {
@@ -21,7 +21,7 @@ pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
 
     while let Some(current) = stack.pop() {
         if current.coord == goal {
-            maze[current.coord] = Cell::GOAL;
+            maze[current.coord] = GridCell::GOAL;
             // Backtrack to mark the path
             let mut child = Rc::new(current);
             while let Some(parent) = child.parent.as_ref() {
@@ -47,8 +47,8 @@ pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
         }
 
         // Mark the current cell as visited
-        if maze[current.coord] != Cell::START {
-            maze[current.coord] = Cell::VISITED;
+        if maze[current.coord] != GridCell::START {
+            maze[current.coord] = GridCell::VISITED;
         }
         maze.render().ok();
 
@@ -70,7 +70,7 @@ pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
         .filter(|&(_, c)| maze.is_in_bounds(c))
         .filter(|&(i, c)| {
             let is_neighbor_unvisited =
-                !visited.contains(&c) && (maze[c] == Cell::PATH || maze[c] == Cell::GOAL);
+                !visited.contains(&c) && (maze[c] == GridCell::PATH || maze[c] == GridCell::GOAL);
             let (from, orientation) = match i {
                 0 => (c, Orientation::Vertical),                  // Left
                 1 => (rc_current.coord, Orientation::Vertical),   // Right

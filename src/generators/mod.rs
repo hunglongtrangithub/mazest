@@ -1,3 +1,13 @@
+//! Maze generation algorithms.
+//!
+//! This module includes implementations of several maze generation algorithms:
+//! - Randomized Depth-First Search (DFS)
+//! - Prim's Algorithm
+//! - Recursive Division
+//! - Kruskal's Algorithm
+//!
+//! Each algorithm can be selected and applied to a [`Maze`] instance.
+
 use rand::{SeedableRng, rngs::StdRng};
 
 mod dfs;
@@ -10,7 +20,6 @@ use prim::randomized_prim;
 use recur_div::recursive_division;
 
 use crate::{generators::kruskal::randomized_kruskal, maze::Maze};
-// TODO: Add Kruskal's generator
 
 /// Get a random number generator, optionally seeded for reproducibility.
 fn get_rng(seed: Option<u64>) -> StdRng {

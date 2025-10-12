@@ -1,10 +1,11 @@
+use crossterm::execute;
+
 pub mod cell;
 mod grid;
 
-use crossterm::execute;
-
-pub use cell::{Cell, PathType};
 use grid::Grid;
+
+pub use cell::{GridCell, PathType};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Orientation {
@@ -26,13 +27,13 @@ impl Maze {
         let grid_height = height as u16 * 2 + 1;
         let grid_width = width as u16 * 2 + 1;
         let mut maze = Maze {
-            grid: Grid::new(grid_width, grid_height, Cell::WALL),
+            grid: Grid::new(grid_width, grid_height, GridCell::WALL),
             width,
             height,
         };
         (0..height).for_each(|y| {
             (0..width).for_each(|x| {
-                maze[(x, y)] = Cell::PATH;
+                maze[(x, y)] = GridCell::PATH;
             });
         });
         maze
@@ -40,7 +41,7 @@ impl Maze {
 
     #[cfg(test)]
     /// Returns a reference to the internal grid data for testing purposes.
-    pub fn grid(&self) -> &[Cell] {
+    pub fn grid(&self) -> &[GridCell] {
         &self.grid.data
     }
 
@@ -117,8 +118,8 @@ impl Maze {
                 (from.0 as u16 * 2 + 2, from.1 as u16 * 2 + 1)
             }
         };
-        if matches!(self.grid[wall_coord], Cell::Wall(_)) {
-            self.grid[wall_coord] = Cell::PATH;
+        if matches!(self.grid[wall_coord], GridCell::Wall(_)) {
+            self.grid[wall_coord] = GridCell::PATH;
             true
         } else {
             false
@@ -167,7 +168,7 @@ impl Maze {
                 let start = start as u16 * 2 + 1;
                 let end = end as u16 * 2 + 1;
                 (start..=end).for_each(|x| {
-                    self.grid[(x, y_wall)] = Cell::WALL;
+                    self.grid[(x, y_wall)] = GridCell::WALL;
                 });
             }
             Orientation::Vertical => {
@@ -184,7 +185,7 @@ impl Maze {
                 let start = start as u16 * 2 + 1;
                 let end = end as u16 * 2 + 1;
                 (start..=end).for_each(|y| {
-                    self.grid[(x_wall, y)] = Cell::WALL;
+                    self.grid[(x_wall, y)] = GridCell::WALL;
                 });
             }
         }
@@ -213,7 +214,7 @@ impl Maze {
                 (from.0 as u16 * 2 + 2, from.1 as u16 * 2 + 1)
             }
         };
-        matches!(self.grid[wall_coord], Cell::Wall(_))
+        matches!(self.grid[wall_coord], GridCell::Wall(_))
     }
 
     /// Set the wall cell after the specified cell in the given orientation to be a path (removing the wall).
@@ -235,7 +236,7 @@ impl Maze {
                 (from.0 as u16 * 2 + 1, from.1 as u16 * 2 + 2)
             }
         };
-        self.grid[wall_coord] = Cell::Path(PathType::Path(orientation));
+        self.grid[wall_coord] = GridCell::Path(PathType::Path(orientation));
     }
 
     /// Clears all existing walls within the maze. Boundary walls are preserved.
@@ -246,7 +247,7 @@ impl Maze {
                 if self.grid.is_boundary(x, y) {
                     return;
                 }
-                self.grid[(x, y)] = Cell::PATH;
+                self.grid[(x, y)] = GridCell::PATH;
             });
         });
     }
@@ -259,14 +260,14 @@ impl Maze {
                 if self.grid.is_boundary(x, y) {
                     return;
                 }
-                self.grid[(x, y)] = Cell::WALL;
+                self.grid[(x, y)] = GridCell::WALL;
             });
         });
     }
 }
 
 impl std::ops::Index<(u8, u8)> for Maze {
-    type Output = Cell;
+    type Output = GridCell;
 
     fn index(&self, index: (u8, u8)) -> &Self::Output {
         let grid_index = (index.0 as u16 * 2 + 1, index.1 as u16 * 2 + 1);
@@ -312,8 +313,8 @@ mod tests {
     #[test]
     fn test_maze_indexing() {
         let mut maze = Maze::new(5, 5);
-        maze[(2, 3)] = Cell::START;
-        assert_eq!(maze[(2, 3)], Cell::START);
+        maze[(2, 3)] = GridCell::START;
+        assert_eq!(maze[(2, 3)], GridCell::START);
     }
 
     #[test]
@@ -323,7 +324,7 @@ mod tests {
         // Trying to remove the same wall again should return false
         assert!(!maze.remove_wall_cell_after((1, 1), Orientation::Vertical));
         // Check that the wall has been removed in the grid
-        assert_eq!(maze.grid[(3, 5)], Cell::PATH);
+        assert_eq!(maze.grid[(3, 5)], GridCell::PATH);
     }
 
     #[test]
