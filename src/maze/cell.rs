@@ -1,10 +1,12 @@
 use crossterm::style::{Color, Stylize};
+use unicode_width::UnicodeWidthStr;
+
 use std::fmt;
 
 use crate::maze::Orientation;
 
-#[derive(Debug, Clone, PartialEq)]
 /// Represents a cell in the grid, which can be either a path or a wall.
+#[derive(Debug, Clone, PartialEq)]
 pub enum GridCell {
     Path(PathType),
     Wall(WallType),
@@ -19,9 +21,8 @@ impl GridCell {
     pub const VISITED: GridCell = GridCell::Path(PathType::Visited);
 }
 
-#[derive(Debug, Clone, PartialEq)]
 /// Represents different types of path cells in the maze.
-#[derive(Default)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub enum PathType {
     Path(Orientation),
     #[default]
@@ -31,9 +32,8 @@ pub enum PathType {
     Goal,
 }
 
-#[derive(Debug, Clone, PartialEq)]
 /// Represents different types of wall cells in the maze.
-#[derive(Default)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub enum WallType {
     #[default]
     Wall,
@@ -50,14 +50,19 @@ impl fmt::Display for GridCell {
                 },
                 PathType::Empty => "  ".with(Color::Reset),
                 PathType::Visited => "* ".with(Color::Blue),
-                PathType::Start => "S ".with(Color::Green),
-                PathType::Goal => "G ".with(Color::Red),
+                PathType::Start => "🟩".with(Color::Green),
+                PathType::Goal => "🟥".with(Color::Red),
             },
             GridCell::Wall(wall) => match wall {
                 WallType::Wall => "⬜".with(Color::White),
                 WallType::Mark => "🟪".with(Color::Magenta),
             },
         };
+        assert_eq!(
+            styled_symbol.content().width(),
+            2,
+            "Each cell must occupy exactly two character widths."
+        );
         write!(f, "{}", styled_symbol)
     }
 }
