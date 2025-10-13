@@ -6,7 +6,7 @@ use std::fmt;
 use crate::maze::Orientation;
 
 /// Represents a cell in the grid, which can be either a path or a wall.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GridCell {
     Path(PathType),
     Wall(WallType),
@@ -22,7 +22,7 @@ impl GridCell {
 }
 
 /// Represents different types of path cells in the maze.
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum PathType {
     Path(Orientation),
     #[default]
@@ -33,7 +33,7 @@ pub enum PathType {
 }
 
 /// Represents different types of wall cells in the maze.
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum WallType {
     #[default]
     Wall,

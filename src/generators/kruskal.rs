@@ -67,7 +67,6 @@ pub fn randomized_kruskal(maze: &mut Maze, seed: Option<u64>) {
     (0..height).for_each(|y| {
         (0..width).for_each(|x| maze.set((x, y), GridCell::PATH));
     });
-    maze.render().ok();
 
     // Initialize Union-Find for all cells
     let total_cells = (width as u16) * (height as u16);
@@ -123,8 +122,6 @@ pub fn randomized_kruskal(maze: &mut Maze, seed: Option<u64>) {
                 )
             };
             maze.remove_wall_cell_after(from, orientation);
-
-            maze.render().ok();
         }
     }
 }

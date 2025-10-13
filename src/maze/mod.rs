@@ -1,13 +1,15 @@
-use crossterm::execute;
-
 pub mod cell;
 mod grid;
+
+use std::sync::mpsc::Sender;
 
 use grid::Grid;
 
 pub use cell::{GridCell, PathType};
 
-#[derive(Debug, Clone, PartialEq)]
+use crate::GridEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Orientation {
     Horizontal,
     Vertical,
@@ -22,12 +24,14 @@ pub struct Maze {
 impl Maze {
     /// Creates a new maze with the given width and height.
     /// The maze is initialized with walls, and the internal grid is sized to accommodate walls between cells.
-    pub fn new(width: u8, height: u8) -> Self {
+    pub fn new(width: u8, height: u8, sender: Option<Sender<GridEvent>>) -> Self {
         // n cells in each dimension -> n + 1 walls -> 2n + 1 total
         let grid_height = height as u16 * 2 + 1;
         let grid_width = width as u16 * 2 + 1;
+
+        let grid = Grid::new(grid_width, grid_height, GridCell::WALL, sender);
         let mut maze = Maze {
-            grid: Grid::new(grid_width, grid_height, GridCell::WALL),
+            grid,
             width,
             height,
         };
@@ -39,10 +43,10 @@ impl Maze {
         maze
     }
 
+    /// Returns an immutable reference to the internal grid data.
     #[cfg(test)]
-    /// Returns a reference to the internal grid data for testing purposes.
-    pub fn grid(&self) -> &[GridCell] {
-        &self.grid.data
+    pub fn grid(&self) -> &Grid {
+        &self.grid
     }
 
     /// Returns the height of the maze in cells.
@@ -63,27 +67,6 @@ impl Maze {
     pub fn set(&mut self, coord: (u8, u8), cell: GridCell) {
         let grid_coord = (coord.0 as u16 * 2 + 1, coord.1 as u16 * 2 + 1);
         self.grid.set(grid_coord, cell);
-    }
-
-    /// Renders the maze to the terminal.
-    pub fn render(&self) -> std::io::Result<()> {
-        execute!(
-            std::io::stdout(),
-            crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
-            crossterm::cursor::MoveTo(0, 0),
-        )?;
-        self.grid.display();
-        match std::env::var("DEBUG") {
-            Ok(val) if val == "1" => {
-                println!("Press Enter to continue...");
-                // Wait for Enter key press
-                std::io::stdin().read_line(&mut String::new())?;
-            }
-            _ => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-        }
-        Ok(())
     }
 
     /// Checks if the given coordinate is within the bounds of the maze.
@@ -312,14 +295,14 @@ mod tests {
     use super::*;
     #[test]
     fn test_maze_indexing() {
-        let mut maze = Maze::new(5, 5);
+        let mut maze = Maze::new(5, 5, None);
         maze.set((2, 3), GridCell::START);
         assert_eq!(maze[(2, 3)], GridCell::START);
     }
 
     #[test]
     fn test_remove_wall() {
-        let mut maze = Maze::new(5, 5);
+        let mut maze = Maze::new(5, 5, None);
         assert!(maze.remove_wall_cell_after((1, 1), Orientation::Vertical));
         // Trying to remove the same wall again should return false
         assert!(!maze.remove_wall_cell_after((1, 1), Orientation::Vertical));
@@ -329,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_out_of_bounds() {
-        let maze = Maze::new(5, 5);
+        let maze = Maze::new(5, 5, None);
         assert!(!maze.is_in_bounds((5, 5)));
         assert!(!maze.is_in_bounds((0, 5)));
         assert!(!maze.is_in_bounds((5, 0)));

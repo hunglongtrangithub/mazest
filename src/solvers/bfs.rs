@@ -39,10 +39,8 @@ pub fn solve_bfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
                     )
                 };
                 maze.set_path_cell_after(from, orientation);
-                maze.render().ok();
                 child = parent.clone();
             }
-            maze.render().ok();
             return true; // Goal found
         }
 
@@ -50,7 +48,6 @@ pub fn solve_bfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
         if maze[current.coord] != GridCell::START {
             maze.set(current.coord, GridCell::VISITED);
         }
-        maze.render().ok();
 
         let rc_current = Rc::new(current);
 

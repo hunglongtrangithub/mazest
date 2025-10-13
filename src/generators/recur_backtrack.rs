@@ -36,7 +36,6 @@ pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
         if !neighbors.is_empty() {
             let neighbor = neighbors[rng.random_range(0..neighbors.len())];
             maze.set(neighbor, GridCell::MARK);
-            maze.render().ok();
 
             let (from, orientation) = if cell.0 == neighbor.0 {
                 // Same column, so the wall is horizontal
@@ -54,7 +53,6 @@ pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
             maze.remove_wall_cell_after(from, orientation);
 
             maze.set(neighbor, GridCell::PATH);
-            maze.render().ok();
             // Put the cell back first so we can look at another neighbor  of this cell later
             stack.push(cell);
             // Put the neighbor to carve the maze in that neighbor's direction

@@ -50,7 +50,6 @@ pub fn recursive_division(maze: &mut Maze, seed: Option<u64>) {
                 maze.insert_wall_line_after(y_wall, x, x + width - 1, Orientation::Horizontal);
                 // Create a hole in the wall line
                 maze.remove_wall_cell_after((x_hole, y_wall), Orientation::Horizontal);
-                maze.render().ok();
 
                 let upper_height = diff + 1;
                 let lower_height = height - upper_height;
@@ -71,7 +70,6 @@ pub fn recursive_division(maze: &mut Maze, seed: Option<u64>) {
                 maze.insert_wall_line_after(x_wall, y, y + height - 1, Orientation::Vertical);
                 // Create a hole in the wall line
                 maze.remove_wall_cell_after((x_wall, y_hole), Orientation::Vertical);
-                maze.render().ok();
 
                 let left_width = diff + 1;
                 let right_width = width - left_width;
