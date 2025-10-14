@@ -19,6 +19,8 @@ impl GridCell {
     pub const GOAL: GridCell = GridCell::Path(PathType::Goal);
     pub const START: GridCell = GridCell::Path(PathType::Start);
     pub const VISITED: GridCell = GridCell::Path(PathType::Visited);
+    /// The width of each cell when rendered, in character widths.
+    pub const CELL_WIDTH: usize = 2;
 }
 
 /// Represents different types of path cells in the maze.
@@ -60,7 +62,7 @@ impl fmt::Display for GridCell {
         };
         assert_eq!(
             styled_symbol.content().width(),
-            2,
+            GridCell::CELL_WIDTH,
             "Each cell must occupy exactly two character widths."
         );
         write!(f, "{}", styled_symbol)
