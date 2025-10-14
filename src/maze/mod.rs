@@ -24,12 +24,12 @@ pub struct Maze {
 impl Maze {
     /// Creates a new maze with the given width and height.
     /// The maze is initialized with walls, and the internal grid is sized to accommodate walls between cells.
-    pub fn new(width: u8, height: u8, sender: Option<Sender<GridEvent>>) -> Self {
+    pub fn new(width: u8, height: u8, grid_event_tx: Option<Sender<GridEvent>>) -> Self {
         // n cells in each dimension -> n + 1 walls -> 2n + 1 total
         let grid_height = height as u16 * 2 + 1;
         let grid_width = width as u16 * 2 + 1;
 
-        let grid = Grid::new(grid_width, grid_height, GridCell::WALL, sender);
+        let grid = Grid::new(grid_width, grid_height, GridCell::WALL, grid_event_tx);
         let mut maze = Maze {
             grid,
             width,

@@ -7,13 +7,18 @@ pub struct Grid {
     pub data: Box<[GridCell]>,
     width: u16,
     height: u16,
-    sender: Option<Sender<GridEvent>>,
+    grid_event_tx: Option<Sender<GridEvent>>,
 }
 
 impl Grid {
-    pub fn new(width: u16, height: u16, cell: GridCell, sender: Option<Sender<GridEvent>>) -> Self {
+    pub fn new(
+        width: u16,
+        height: u16,
+        cell: GridCell,
+        grid_event_tx: Option<Sender<GridEvent>>,
+    ) -> Self {
         let data = vec![cell; width as usize * height as usize].into_boxed_slice();
-        if let Some(s) = &sender {
+        if let Some(s) = &grid_event_tx {
             let _ = s.send(GridEvent::Initial {
                 cell,
                 width,
@@ -24,7 +29,7 @@ impl Grid {
             data,
             width,
             height,
-            sender,
+            grid_event_tx,
         }
     }
 
@@ -50,7 +55,7 @@ impl Grid {
         let old = self.data[idx];
         if old != cell {
             self.data[idx] = cell;
-            if let Some(sender) = &self.sender {
+            if let Some(sender) = &self.grid_event_tx {
                 let _ = sender.send(GridEvent::Update {
                     coord,
                     old,
