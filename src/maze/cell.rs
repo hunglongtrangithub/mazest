@@ -49,9 +49,12 @@ impl fmt::Display for GridCell {
                 PathType::Path(orientation) => match orientation {
                     Orientation::Horizontal => "══".with(Color::Yellow),
                     Orientation::Vertical => "║ ".with(Color::Yellow),
+                    // Orientation::Horizontal => "🟨".with(Color::Yellow),
+                    // Orientation::Vertical => "🟨".with(Color::Yellow),
                 },
                 PathType::Empty => "  ".with(Color::Reset),
-                PathType::Visited => "* ".with(Color::Blue),
+                // PathType::Visited => "* ".with(Color::Blue),
+                PathType::Visited => "🟦".with(Color::Blue),
                 PathType::Start => "🟩".with(Color::Green),
                 PathType::Goal => "🟥".with(Color::Red),
             },

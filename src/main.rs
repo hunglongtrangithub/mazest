@@ -3,7 +3,7 @@ mod maze;
 mod solvers;
 
 use std::{
-    io::{Read, Write},
+    io::{Read, Stdout, Write},
     sync::mpsc::Receiver,
     time::Duration,
 };
@@ -30,13 +30,17 @@ enum GridEvent {
 }
 
 pub struct App {
-    render_refresh_time: Duration,
+    /// Interval at which to render the event buffer
+    render_interval: Duration,
+    /// Time taken to render each grid update when grid size is u8::MAX
+    render_refresh_rate: Duration,
 }
 
 impl Default for App {
     fn default() -> Self {
         Self {
-            render_refresh_time: Duration::from_millis(10),
+            render_interval: Duration::from_millis(1000),
+            render_refresh_rate: Duration::from_micros(20),
         }
     }
 }
@@ -104,15 +108,46 @@ impl App {
 
         // Clear the terminal screen
         let mut stdout = std::io::stdout();
+        App::setup_terminal(&mut stdout)?;
+        let resize_msg = "Terminal size is too small for the maze dimensions to display. Please resize the terminal.";
+        let (term_width, term_height) = terminal::size()?;
+        if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
+            print!("{}\r\n", resize_msg);
+            stdout.flush()?;
+            App::restore_terminal(&mut stdout)?;
+            return Ok(());
+        }
+        self.spawn_compute_and_render_threads(width, height, generator, solver)?;
+        App::restore_terminal(&mut stdout)?;
+        Ok(())
+    }
+
+    fn set_panic_hook() {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            let _ = App::restore_terminal(&mut std::io::stdout()); // ignore any errors as we are already failing
+            hook(panic_info);
+        }));
+    }
+
+    fn setup_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
         terminal::enable_raw_mode()?;
+        App::set_panic_hook();
         execute!(stdout, terminal::EnterAlternateScreen)?;
         crossterm::execute!(stdout, terminal::Clear(ClearType::All), cursor::Hide)?;
-        let render_interval = Duration::from_millis(100);
-        self.spawn_compute_and_render_threads(width, height, generator, solver, render_interval)?;
+        Ok(())
+    }
+
+    fn restore_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
         execute!(stdout, terminal::LeaveAlternateScreen)?;
         crossterm::execute!(stdout, cursor::Show)?;
         terminal::disable_raw_mode()?;
         Ok(())
+    }
+
+    fn calculate_render_refresh_time(&self, grid_width: u8, grid_height: u8) -> Duration {
+        let size = grid_width.max(grid_height) as usize;
+        self.render_refresh_rate * u8::MAX as u32 / size as u32
     }
 
     fn spawn_compute_and_render_threads(
@@ -121,13 +156,13 @@ impl App {
         height: u8,
         generator: generators::Generator,
         solver: solvers::Solver,
-        render_interval: Duration,
     ) -> std::io::Result<()> {
         let (grid_event_tx, grid_event_rx) = std::sync::mpsc::channel::<GridEvent>();
         let mut maze = maze::Maze::new(width, height, Some(grid_event_tx));
 
         // Spawn a thread to listen for grid updates and render the maze
-        let render_refresh_time = self.render_refresh_time;
+        let render_refresh_time = self.calculate_render_refresh_time(width, height);
+        let render_interval = self.render_interval;
         let render_thread_handle = std::thread::spawn(move || {
             App::render_loop(render_interval, grid_event_rx, render_refresh_time)
         });
