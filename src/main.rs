@@ -419,7 +419,7 @@ impl App {
                     // Move to top-left corner
                     // Print the whole grid with the specified cell
 
-                    stdout.queue(crossterm::cursor::MoveTo(0, 0))?;
+                    stdout.queue(cursor::MoveTo(0, 0))?;
                     for _y in 0..height {
                         for _x in 0..width {
                             stdout.queue(style::Print(cell))?;
@@ -443,8 +443,11 @@ impl App {
                             stdout.flush()?;
                             return Ok(());
                         }
-                        stdout.queue(cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1))?;
-                        stdout.queue(style::Print(new))?;
+                        queue!(
+                            stdout,
+                            cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
+                            style::Print(new)
+                        )?;
                         stdout.flush()?;
                     }
                     // Skip if width and height are not set
@@ -467,6 +470,7 @@ impl App {
         let mut last_render = std::time::Instant::now();
         let mut grid_dims = None;
 
+        execute!(stdout, terminal::Clear(ClearType::All), cursor::Hide,)?;
         loop {
             // Block and wait for the next event
             match receiver.recv() {
@@ -498,8 +502,7 @@ impl App {
         }
         // Move cursor below the maze after exiting
         if let Some((_, height)) = grid_dims {
-            queue!(stdout, crossterm::cursor::MoveTo(0, height))?;
-            stdout.flush()?;
+            execute!(stdout, cursor::MoveTo(0, height), cursor::Show)?;
         }
         Ok(())
     }
