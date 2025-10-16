@@ -95,7 +95,7 @@ impl App {
         // Ask user for maze solving algorithm
         let solver = match App::select_from_menu(
             stdout,
-            "Select maze solving algorithm (use arrow keys and Enter):",
+            "Select maze solving algorithm (use arrow keys and Enter, or Esc to exit):",
             &[
                 solvers::Solver::Dfs,
                 solvers::Solver::Bfs,
@@ -117,8 +117,8 @@ impl App {
             }
         };
 
-        let goal_reached =
-            self.spawn_compute_and_render_threads(width, height, generator, solver)?;
+        // TODO: implement canceling generation/solving with Esc key
+        let goal_reached = self.start_rendering(width, height, generator, solver)?;
 
         if goal_reached {
             print!("Maze solved! Goal reached.\r\n");
@@ -358,10 +358,10 @@ impl App {
 
     fn calculate_render_refresh_time(&self, grid_width: u8, grid_height: u8) -> Duration {
         let size = grid_width.max(grid_height) as usize;
-        self.render_refresh_rate * u8::MAX as u32 / size as u32
+        self.render_refresh_rate * (u8::MAX as u32 / size as u32).pow(2)
     }
 
-    fn spawn_compute_and_render_threads(
+    fn start_rendering(
         &self,
         width: u8,
         height: u8,
