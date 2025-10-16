@@ -49,16 +49,12 @@ impl Default for App {
 }
 
 impl App {
-    pub fn run(&self) -> std::io::Result<()> {
-        let mut stdout = std::io::stdout();
-        App::setup_terminal(&mut stdout)?;
-
+    pub fn run(&self, stdout: &mut std::io::Stdout) -> std::io::Result<()> {
         // Ask user for grid dimensions
-        let (width, height) = match App::ask_grid_dimensions(&mut stdout)? {
+        let (width, height) = match App::ask_grid_dimensions(stdout)? {
             Some(dims) => dims,
             None => {
-                println!("Input cancelled. Exiting.");
-                App::restore_terminal(&mut stdout)?;
+                print!("Input cancelled. Exiting.\r\n");
                 return Ok(());
             }
         };
@@ -68,14 +64,12 @@ impl App {
             print!(
                 "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
             );
-            stdout.flush()?;
-            App::restore_terminal(&mut stdout)?;
             return Ok(());
         }
 
         // Ask user for maze generation algorithm
         let generator = match App::select_from_menu(
-            &mut stdout,
+            stdout,
             "Select maze generation algorithm (use arrow keys and Enter, or Esc to exit):",
             &[
                 generators::Generator::RecurBacktrack,
@@ -93,15 +87,14 @@ impl App {
                 generator
             }
             None => {
-                println!("Input cancelled. Exiting.");
-                App::restore_terminal(&mut stdout)?;
+                print!("Input cancelled. Exiting.\r\n");
                 return Ok(());
             }
         };
 
         // Ask user for maze solving algorithm
         let solver = match App::select_from_menu(
-            &mut stdout,
+            stdout,
             "Select maze solving algorithm (use arrow keys and Enter):",
             &[
                 solvers::Solver::Dfs,
@@ -119,14 +112,19 @@ impl App {
                 solver
             }
             None => {
-                println!("Input cancelled. Exiting.");
-                App::restore_terminal(&mut stdout)?;
+                print!("Input cancelled. Exiting.\r\n");
                 return Ok(());
             }
         };
 
-        self.spawn_compute_and_render_threads(width, height, generator, solver)?;
-        App::restore_terminal(&mut stdout)?;
+        let goal_reached =
+            self.spawn_compute_and_render_threads(width, height, generator, solver)?;
+
+        if goal_reached {
+            print!("Maze solved! Goal reached.\r\n");
+        } else {
+            print!("No path found to the goal.\r\n");
+        }
         Ok(())
     }
 
@@ -160,7 +158,7 @@ impl App {
             ))?;
 
             // Decide color based on validity
-            let validation_result = validate(&input);
+            let validation_result = validate(input.trim());
             match validation_result {
                 Ok(_) => {
                     stdout.execute(style::SetForegroundColor(Color::Green))?;
@@ -193,7 +191,9 @@ impl App {
                         // otherwise, stay in loop
                     }
                     KeyCode::Char(c) if kind == event::KeyEventKind::Press => {
-                        input.push(c);
+                        if !c.is_whitespace() && !c.is_control() {
+                            input.push(c);
+                        }
                     }
                     KeyCode::Backspace => {
                         input.pop();
@@ -280,7 +280,7 @@ impl App {
             )?;
 
             // Print prompt
-            stdout.execute(style::PrintStyledContent(prompt.with(Color::Blue)))?;
+            stdout.execute(style::PrintStyledContent(prompt.with(Color::Yellow)))?;
 
             // Print options
             for (i, option) in options.iter().enumerate() {
@@ -351,8 +351,7 @@ impl App {
     }
 
     fn restore_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
-        execute!(stdout, terminal::LeaveAlternateScreen)?;
-        crossterm::execute!(stdout, cursor::Show)?;
+        execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
         terminal::disable_raw_mode()?;
         Ok(())
     }
@@ -368,7 +367,7 @@ impl App {
         height: u8,
         generator: generators::Generator,
         solver: solvers::Solver,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<bool> {
         let (grid_event_tx, grid_event_rx) = std::sync::mpsc::channel::<GridEvent>();
         let mut maze = maze::Maze::new(width, height, Some(grid_event_tx));
 
@@ -390,21 +389,7 @@ impl App {
         // Wait for render thread to finish - ignore any errors
         render_thread_handle.join().ok();
 
-        let mut stdout = std::io::stdout();
-        if goal_reached {
-            print!("Maze solved! Goal reached.\r\n");
-        } else {
-            print!("No path found to the goal.\r\n");
-        }
-        print!("Press Enter to exit...\r\n");
-        stdout.flush()?;
-        let mut buf = [0u8; 1];
-        while std::io::stdin().read(&mut buf)? == 1 {
-            if buf[0] == b'\r' {
-                break;
-            }
-        }
-        Ok(())
+        Ok(goal_reached)
     }
 
     fn process_events(
@@ -521,6 +506,18 @@ impl App {
 }
 
 fn main() -> std::io::Result<()> {
+    let mut stdout = std::io::stdout();
+    App::setup_terminal(&mut stdout)?;
     let app = App::default();
-    app.run()
+    let res = app.run(&mut stdout);
+    print!("Press Enter to exit...\r\n");
+    stdout.flush()?;
+    let mut buf = [0u8; 1];
+    while std::io::stdin().read(&mut buf)? == 1 {
+        if buf[0] == b'\r' {
+            break;
+        }
+    }
+    App::restore_terminal(&mut stdout)?;
+    res
 }
