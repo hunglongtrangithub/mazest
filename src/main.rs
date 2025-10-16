@@ -3,13 +3,16 @@ mod maze;
 mod solvers;
 
 use std::{
-    io::{Read, Stdout, Write},
+    io::{Read, Write},
     sync::mpsc::Receiver,
     time::Duration,
 };
 
 use crossterm::{
-    cursor, execute, queue,
+    ExecutableCommand, QueueableCommand, cursor,
+    event::{self, KeyCode},
+    execute, queue,
+    style::{self, Attribute, Color, Stylize},
     terminal::{self, ClearType},
 };
 
@@ -47,35 +50,27 @@ impl Default for App {
 
 impl App {
     pub fn run(&self) -> std::io::Result<()> {
+        let mut stdout = std::io::stdout();
+        App::setup_terminal(&mut stdout)?;
+
+        // Ask user for grid dimensions
+        let (width, height) = match App::ask_grid_dimensions(&mut stdout)? {
+            Some(dims) => dims,
+            None => {
+                println!("Input cancelled. Exiting.");
+                App::restore_terminal(&mut stdout)?;
+                return Ok(());
+            }
+        };
+
+        terminal::disable_raw_mode()?;
         let mut input = String::new();
-        println!("Enter maze dimensions (width height). Maximum size is 255x255:");
-        std::io::stdin().read_line(&mut input)?;
-
-        // Parse the input dimensions
-        let dims = input
-            .split_whitespace()
-            .take(2)
-            .filter_map(|s| s.parse::<u8>().ok())
-            .collect::<Vec<_>>();
-
-        if dims.len() != 2 {
-            eprintln!("Please enter two valid numbers for width and height.");
-            return Ok(());
-        }
-
-        let (width, height) = (dims[0], dims[1]);
-        if width < 2 || height < 2 {
-            eprintln!("Width and height must be at least 2.");
-            return Ok(());
-        }
-
         // Let user select the algorithm
         println!("Select maze generation algorithm:");
         println!("1. {}", generators::Generator::RecurBacktrack);
         println!("2. {}", generators::Generator::Prim);
         println!("3. {}", generators::Generator::RecurDiv);
         println!("4. {}", generators::Generator::Kruskal);
-        input.clear();
         std::io::stdin().read_line(&mut input)?;
         let generator = match input.trim() {
             "1" => generators::Generator::RecurBacktrack,
@@ -106,9 +101,8 @@ impl App {
             }
         };
 
-        // Clear the terminal screen
-        let mut stdout = std::io::stdout();
-        App::setup_terminal(&mut stdout)?;
+        terminal::enable_raw_mode()?;
+
         let resize_msg = "Terminal size is too small for the maze dimensions to display. Please resize the terminal.";
         let (term_width, term_height) = terminal::size()?;
         if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
@@ -122,6 +116,129 @@ impl App {
         Ok(())
     }
 
+    /// Get user input with real-time validation and feedback
+    /// Returns None if user cancels input with Esc
+    /// Returns Some(T) if user inputs a valid input and presses Enter, where T is the validated type
+    fn prompt_with_validation<F, T>(
+        stdout: &mut std::io::Stdout,
+        prompt: &str,
+        validate: F,
+    ) -> std::io::Result<Option<T>>
+    where
+        F: Fn(&str) -> Result<T, String>,
+    {
+        stdout.execute(cursor::Hide)?;
+        // Save cursor position so we can restore / redraw
+        stdout.execute(cursor::SavePosition)?;
+
+        let mut input = String::new();
+
+        let number_option = loop {
+            // Re-render prompt line
+            stdout.execute(cursor::RestorePosition)?;
+            stdout.execute(terminal::Clear(ClearType::FromCursorDown))?;
+
+            // Print prompt
+            stdout.execute(style::PrintStyledContent(
+                prompt.with(Color::Cyan).attribute(Attribute::Bold),
+            ))?;
+
+            // Decide color based on validity
+            let validation_result = validate(&input);
+            match validation_result {
+                Ok(_) => {
+                    stdout.execute(style::SetForegroundColor(Color::Green))?;
+                }
+                Err(_) => {
+                    stdout.execute(style::SetForegroundColor(Color::Red))?;
+                }
+            }
+
+            stdout.execute(style::Print(&input))?;
+            stdout.execute(style::ResetColor)?;
+
+            // Print a space after input so cursor is visible
+            stdout.execute(style::Print(" \r\n"))?;
+
+            // Error message line (if any)
+            if let Err(msg) = validation_result {
+                stdout.execute(style::PrintStyledContent(
+                    msg.with(Color::DarkGrey).attribute(Attribute::Dim),
+                ))?;
+            }
+
+            // Wait for key event
+            if let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? {
+                match code {
+                    KeyCode::Enter => {
+                        match validate(&input) {
+                            Ok(n) => break Some(n), // valid number, exit loop
+                            Err(_) => continue,     // invalid, re-render
+                        }
+                        // otherwise, stay in loop
+                    }
+                    KeyCode::Char(c) if kind == event::KeyEventKind::Press => {
+                        input.push(c);
+                    }
+                    KeyCode::Backspace => {
+                        input.pop();
+                    }
+                    KeyCode::Esc => {
+                        // User cancelled input
+                        break None;
+                    }
+                    _ => {}
+                }
+            }
+        };
+        // Cleanup
+        stdout.execute(cursor::RestorePosition)?;
+        stdout.execute(cursor::Show)?;
+
+        Ok(number_option)
+    }
+
+    /// Ask user for grid dimensions (width and height between 1 and 255)
+    /// Returns None if user cancels input with Esc
+    /// Returns Some((width, height)) if user inputs valid dimensions
+    fn ask_grid_dimensions(stdout: &mut std::io::Stdout) -> std::io::Result<Option<(u8, u8)>> {
+        stdout.execute(style::PrintStyledContent(
+            "Enter maze dimensions (width and height between 1 and 255), or press Esc to exit:\r\n"
+                .with(Color::Blue),
+        ))?;
+
+        let validate = |s: &str| {
+            s.parse::<u8>()
+                .map_err(|_| "Please enter a number between 1 and 255".to_string())
+                .and_then(|n| match n {
+                    1..=255 => Ok(n),
+                    _ => Err("Number must be between 1 and 255".to_string()),
+                })
+        };
+
+        let width = match App::prompt_with_validation(stdout, "Width: ", validate)? {
+            Some(w) => w,
+            None => return Ok(None),
+        };
+        stdout.execute(style::PrintStyledContent(
+            format!("Width set to {}\r\n", width)
+                .with(Color::Green)
+                .attribute(Attribute::Bold),
+        ))?;
+
+        let height = match App::prompt_with_validation(stdout, "Height: ", validate)? {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+        stdout.execute(style::PrintStyledContent(
+            format!("Height set to {}\r\n", height)
+                .with(Color::Green)
+                .attribute(Attribute::Bold),
+        ))?;
+
+        Ok(Some((width, height)))
+    }
+
     fn set_panic_hook() {
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
@@ -130,15 +247,20 @@ impl App {
         }));
     }
 
-    fn setup_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
+    fn setup_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
         terminal::enable_raw_mode()?;
         App::set_panic_hook();
         execute!(stdout, terminal::EnterAlternateScreen)?;
-        crossterm::execute!(stdout, terminal::Clear(ClearType::All), cursor::Hide)?;
+        crossterm::execute!(
+            stdout,
+            terminal::Clear(ClearType::All),
+            cursor::Hide,
+            cursor::MoveTo(0, 0)
+        )?;
         Ok(())
     }
 
-    fn restore_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
+    fn restore_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
         execute!(stdout, terminal::LeaveAlternateScreen)?;
         crossterm::execute!(stdout, cursor::Show)?;
         terminal::disable_raw_mode()?;
@@ -222,12 +344,12 @@ impl App {
                     // Move to top-left corner
                     // Print the whole grid with the specified cell
 
-                    queue!(stdout, crossterm::cursor::MoveTo(0, 0))?;
+                    stdout.queue(crossterm::cursor::MoveTo(0, 0))?;
                     for _y in 0..height {
                         for _x in 0..width {
-                            queue!(stdout, crossterm::style::Print(cell))?;
+                            stdout.queue(style::Print(cell))?;
                         }
-                        queue!(stdout, crossterm::style::Print("\r\n"))?;
+                        stdout.queue(style::Print("\r\n"))?;
                     }
                     stdout.flush()?;
                 }
@@ -246,11 +368,8 @@ impl App {
                             stdout.flush()?;
                             return Ok(());
                         }
-                        queue!(
-                            stdout,
-                            crossterm::cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
-                            crossterm::style::Print(new),
-                        )?;
+                        stdout.queue(cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1))?;
+                        stdout.queue(style::Print(new))?;
                         stdout.flush()?;
                     }
                     // Skip if width and height are not set
