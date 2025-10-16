@@ -54,7 +54,6 @@ impl App {
         let (width, height) = match App::ask_grid_dimensions(stdout)? {
             Some(dims) => dims,
             None => {
-                print!("Input cancelled. Exiting.\r\n");
                 return Ok(());
             }
         };
@@ -64,6 +63,9 @@ impl App {
             print!(
                 "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
             );
+            print!("Press Enter to exit...\r\n");
+            stdout.flush()?;
+            App::wait_for_enter()?;
             return Ok(());
         }
 
@@ -87,7 +89,6 @@ impl App {
                 generator
             }
             None => {
-                print!("Input cancelled. Exiting.\r\n");
                 return Ok(());
             }
         };
@@ -112,7 +113,6 @@ impl App {
                 solver
             }
             None => {
-                print!("Input cancelled. Exiting.\r\n");
                 return Ok(());
             }
         };
@@ -124,6 +124,19 @@ impl App {
             print!("Maze solved! Goal reached.\r\n");
         } else {
             print!("No path found to the goal.\r\n");
+        }
+        print!("Press Enter to exit...\r\n");
+        stdout.flush()?;
+        App::wait_for_enter()?;
+        Ok(())
+    }
+
+    fn wait_for_enter() -> std::io::Result<()> {
+        let mut buf = [0u8; 1];
+        while std::io::stdin().read(&mut buf)? == 1 {
+            if buf[0] == b'\r' {
+                break;
+            }
         }
         Ok(())
     }
@@ -146,14 +159,14 @@ impl App {
 
         let number_option = loop {
             // Re-render prompt line
-            execute!(
+            queue!(
                 stdout,
                 cursor::RestorePosition,
                 terminal::Clear(ClearType::FromCursorDown)
             )?;
 
             // Print prompt
-            stdout.execute(style::PrintStyledContent(
+            stdout.queue(style::PrintStyledContent(
                 prompt.with(Color::Cyan).attribute(Attribute::Bold),
             ))?;
 
@@ -161,24 +174,25 @@ impl App {
             let validation_result = validate(input.trim());
             match validation_result {
                 Ok(_) => {
-                    stdout.execute(style::SetForegroundColor(Color::Green))?;
+                    stdout.queue(style::SetForegroundColor(Color::Green))?;
                 }
                 Err(_) => {
-                    stdout.execute(style::SetForegroundColor(Color::Red))?;
+                    stdout.queue(style::SetForegroundColor(Color::Red))?;
                 }
             }
 
             execute!(stdout, style::Print(&input), style::ResetColor)?;
 
-            // Print a space after input so cursor is visible
-            stdout.execute(style::Print(" \r\n"))?;
+            stdout.queue(style::Print(" \r\n"))?;
 
             // Error message line (if any)
             if let Err(msg) = validation_result {
-                stdout.execute(style::PrintStyledContent(
+                stdout.queue(style::PrintStyledContent(
                     msg.with(Color::DarkGrey).attribute(Attribute::Dim),
                 ))?;
             }
+
+            stdout.flush()?;
 
             // Wait for key event
             if let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? {
@@ -266,46 +280,55 @@ impl App {
         prompt: &str,
         options: &[T],
     ) -> std::io::Result<Option<T>> {
+        if options.is_empty() {
+            return Ok(None);
+        }
+
         // Save cursor position so we can restore / redraw
-        execute!(stdout, cursor::Hide, cursor::SavePosition)?;
+        queue!(stdout, cursor::Hide, cursor::SavePosition)?;
 
         let mut selected = 0;
 
         let selected_option = loop {
             // Re-render prompt line
-            execute!(
+            queue!(
                 stdout,
                 cursor::RestorePosition,
                 terminal::Clear(ClearType::FromCursorDown)
             )?;
 
             // Print prompt
-            stdout.execute(style::PrintStyledContent(prompt.with(Color::Yellow)))?;
+            stdout.queue(style::PrintStyledContent(prompt.with(Color::Yellow)))?;
 
             // Print options
             for (i, option) in options.iter().enumerate() {
                 if i == selected {
-                    stdout.execute(style::SetAttribute(Attribute::Reverse))?;
+                    stdout.queue(style::SetAttribute(Attribute::Reverse))?;
                 }
-                stdout.execute(style::Print(format!("\r\n{}", option)))?;
+                stdout.queue(style::Print(format!("\r\n{}", option)))?;
                 if i == selected {
-                    stdout.execute(style::SetAttribute(Attribute::NoReverse))?;
+                    stdout.queue(style::SetAttribute(Attribute::NoReverse))?;
                 }
             }
-            stdout.execute(style::Print("\r\n"))?;
+            stdout.queue(style::Print("\r\n"))?;
+
             stdout.flush()?;
 
             // Wait for key event
             if let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? {
                 match code {
-                    KeyCode::Up if selected > 0 => {
-                        selected -= 1;
+                    KeyCode::Up => {
+                        selected = match selected {
+                            0 => options.len() - 1,
+                            _ => selected - 1,
+                        };
                     }
-                    KeyCode::Up => {}
                     KeyCode::Down if kind == event::KeyEventKind::Press => {
-                        if selected < options.len() - 1 {
-                            selected += 1;
-                        }
+                        selected = if selected >= options.len() - 1 {
+                            0
+                        } else {
+                            selected + 1
+                        };
                     }
                     KeyCode::Enter => {
                         break Some(options[selected]);
@@ -513,14 +536,6 @@ fn main() -> std::io::Result<()> {
     App::setup_terminal(&mut stdout)?;
     let app = App::default();
     let res = app.run(&mut stdout);
-    print!("Press Enter to exit...\r\n");
-    stdout.flush()?;
-    let mut buf = [0u8; 1];
-    while std::io::stdin().read(&mut buf)? == 1 {
-        if buf[0] == b'\r' {
-            break;
-        }
-    }
     App::restore_terminal(&mut stdout)?;
     res
 }
