@@ -52,6 +52,7 @@ impl PartialOrd for TrackedCell {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Solver {
     Dfs,
     Bfs,

@@ -62,55 +62,69 @@ impl App {
                 return Ok(());
             }
         };
-
-        terminal::disable_raw_mode()?;
-        let mut input = String::new();
-        // Let user select the algorithm
-        println!("Select maze generation algorithm:");
-        println!("1. {}", generators::Generator::RecurBacktrack);
-        println!("2. {}", generators::Generator::Prim);
-        println!("3. {}", generators::Generator::RecurDiv);
-        println!("4. {}", generators::Generator::Kruskal);
-        std::io::stdin().read_line(&mut input)?;
-        let generator = match input.trim() {
-            "1" => generators::Generator::RecurBacktrack,
-            "2" => generators::Generator::Prim,
-            "3" => generators::Generator::RecurDiv,
-            "4" => generators::Generator::Kruskal,
-            _ => {
-                eprintln!("Invalid selection.");
-                return Ok(());
-            }
-        };
-
-        println!("Select maze solving algorithm:");
-        println!("1. {}", solvers::Solver::Dfs);
-        println!("2. {}", solvers::Solver::Bfs);
-        println!("3. {}", solvers::Solver::Dijkstra);
-        println!("4. {}", solvers::Solver::AStar);
-        input.clear();
-        std::io::stdin().read_line(&mut input)?;
-        let solver = match input.trim() {
-            "1" => solvers::Solver::Dfs,
-            "2" => solvers::Solver::Bfs,
-            "3" => solvers::Solver::Dijkstra,
-            "4" => solvers::Solver::AStar,
-            _ => {
-                eprintln!("Invalid selection.");
-                return Ok(());
-            }
-        };
-
-        terminal::enable_raw_mode()?;
-
-        let resize_msg = "Terminal size is too small for the maze dimensions to display. Please resize the terminal.";
+        // Check if terminal height and width are sufficient
         let (term_width, term_height) = terminal::size()?;
         if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
-            print!("{}\r\n", resize_msg);
+            print!(
+                "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
+            );
             stdout.flush()?;
             App::restore_terminal(&mut stdout)?;
             return Ok(());
         }
+
+        // Ask user for maze generation algorithm
+        let generator = match App::select_from_menu(
+            &mut stdout,
+            "Select maze generation algorithm (use arrow keys and Enter, or Esc to exit):",
+            &[
+                generators::Generator::RecurBacktrack,
+                generators::Generator::Kruskal,
+                generators::Generator::Prim,
+                generators::Generator::RecurDiv,
+            ],
+        )? {
+            Some(generator) => {
+                stdout.execute(style::PrintStyledContent(
+                    format!("Selected generator: {}\r\n", generator)
+                        .with(Color::Green)
+                        .attribute(Attribute::Bold),
+                ))?;
+                generator
+            }
+            None => {
+                println!("Input cancelled. Exiting.");
+                App::restore_terminal(&mut stdout)?;
+                return Ok(());
+            }
+        };
+
+        // Ask user for maze solving algorithm
+        let solver = match App::select_from_menu(
+            &mut stdout,
+            "Select maze solving algorithm (use arrow keys and Enter):",
+            &[
+                solvers::Solver::Dfs,
+                solvers::Solver::Bfs,
+                solvers::Solver::Dijkstra,
+                solvers::Solver::AStar,
+            ],
+        )? {
+            Some(solver) => {
+                stdout.execute(style::PrintStyledContent(
+                    format!("Selected solver: {}\r\n", solver)
+                        .with(Color::Green)
+                        .attribute(Attribute::Bold),
+                ))?;
+                solver
+            }
+            None => {
+                println!("Input cancelled. Exiting.");
+                App::restore_terminal(&mut stdout)?;
+                return Ok(());
+            }
+        };
+
         self.spawn_compute_and_render_threads(width, height, generator, solver)?;
         App::restore_terminal(&mut stdout)?;
         Ok(())
@@ -127,16 +141,18 @@ impl App {
     where
         F: Fn(&str) -> Result<T, String>,
     {
-        stdout.execute(cursor::Hide)?;
         // Save cursor position so we can restore / redraw
-        stdout.execute(cursor::SavePosition)?;
+        execute!(stdout, cursor::Hide, cursor::SavePosition)?;
 
         let mut input = String::new();
 
         let number_option = loop {
             // Re-render prompt line
-            stdout.execute(cursor::RestorePosition)?;
-            stdout.execute(terminal::Clear(ClearType::FromCursorDown))?;
+            execute!(
+                stdout,
+                cursor::RestorePosition,
+                terminal::Clear(ClearType::FromCursorDown)
+            )?;
 
             // Print prompt
             stdout.execute(style::PrintStyledContent(
@@ -154,8 +170,7 @@ impl App {
                 }
             }
 
-            stdout.execute(style::Print(&input))?;
-            stdout.execute(style::ResetColor)?;
+            execute!(stdout, style::Print(&input), style::ResetColor)?;
 
             // Print a space after input so cursor is visible
             stdout.execute(style::Print(" \r\n"))?;
@@ -192,8 +207,12 @@ impl App {
             }
         };
         // Cleanup
-        stdout.execute(cursor::RestorePosition)?;
-        stdout.execute(cursor::Show)?;
+        execute!(
+            stdout,
+            cursor::RestorePosition,
+            terminal::Clear(ClearType::FromCursorDown),
+            cursor::Show
+        )?;
 
         Ok(number_option)
     }
@@ -237,6 +256,77 @@ impl App {
         ))?;
 
         Ok(Some((width, height)))
+    }
+
+    /// Present a menu of options to the user and let them select one using arrow keys
+    /// Returns None if user cancels input with Esc
+    /// Returns Some(T) if user selects an option and presses Enter, where T is the option type
+    fn select_from_menu<T: std::fmt::Display + Copy>(
+        stdout: &mut std::io::Stdout,
+        prompt: &str,
+        options: &[T],
+    ) -> std::io::Result<Option<T>> {
+        // Save cursor position so we can restore / redraw
+        execute!(stdout, cursor::Hide, cursor::SavePosition)?;
+
+        let mut selected = 0;
+
+        let selected_option = loop {
+            // Re-render prompt line
+            execute!(
+                stdout,
+                cursor::RestorePosition,
+                terminal::Clear(ClearType::FromCursorDown)
+            )?;
+
+            // Print prompt
+            stdout.execute(style::PrintStyledContent(prompt.with(Color::Blue)))?;
+
+            // Print options
+            for (i, option) in options.iter().enumerate() {
+                if i == selected {
+                    stdout.execute(style::SetAttribute(Attribute::Reverse))?;
+                }
+                stdout.execute(style::Print(format!("\r\n{}", option)))?;
+                if i == selected {
+                    stdout.execute(style::SetAttribute(Attribute::NoReverse))?;
+                }
+            }
+            stdout.execute(style::Print("\r\n"))?;
+            stdout.flush()?;
+
+            // Wait for key event
+            if let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? {
+                match code {
+                    KeyCode::Up if selected > 0 => {
+                        selected -= 1;
+                    }
+                    KeyCode::Up => {}
+                    KeyCode::Down if kind == event::KeyEventKind::Press => {
+                        if selected < options.len() - 1 {
+                            selected += 1;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        break Some(options[selected]);
+                    }
+                    KeyCode::Esc => {
+                        // User cancelled input
+                        break None;
+                    }
+                    _ => {}
+                }
+            }
+        };
+        // Cleanup
+        execute!(
+            stdout,
+            cursor::RestorePosition,
+            terminal::Clear(ClearType::FromCursorDown),
+            cursor::Show
+        )?;
+
+        Ok(selected_option)
     }
 
     fn set_panic_hook() {

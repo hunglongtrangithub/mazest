@@ -30,6 +30,7 @@ fn get_rng(seed: Option<u64>) -> StdRng {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Generator {
     RecurBacktrack,
     Prim,
