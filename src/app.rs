@@ -81,24 +81,8 @@ impl App {
     /// Main application loop
     pub fn run(&self, stdout: &mut Stdout) -> std::io::Result<()> {
         // Ask user for grid dimensions
-        let (width, height) = match App::ask_grid_dimensions(stdout)? {
+        let (width, height) = match App::ask_maze_dimensions(stdout)? {
             Some(dims) => dims,
-            None => {
-                return Ok(());
-            }
-        };
-
-        // Ask if user wants to loop generation and solving
-        let loop_animation = match App::prompt_with_validation(
-            stdout,
-            "Loop maze generation and solving? When looped, press Esc to stop any time. (y/n): ",
-            |s: &str| match s.to_lowercase().as_str() {
-                "y" | "yes" => Ok(true),
-                "n" | "no" => Ok(false),
-                _ => Err("Please enter 'y' or 'n'".to_string()),
-            },
-        )? {
-            Some(b) => b,
             None => {
                 return Ok(());
             }
@@ -166,6 +150,24 @@ impl App {
             }
         };
 
+        // Ask if user wants to loop generation and solving
+        let loop_animation = match App::prompt_with_validation(
+            stdout,
+            "Loop maze generation and solving? When looped, press Esc to stop any time. ([y]/n): ",
+            |s: &str| match s.to_lowercase().as_str() {
+                "y" | "yes" => Ok(true),
+                "n" | "no" => Ok(false),
+                // If empty, default to true
+                "" => Ok(true),
+                _ => Err("Please enter 'y' or 'n'".to_string()),
+            },
+        )? {
+            Some(b) => b,
+            None => {
+                return Ok(());
+            }
+        };
+
         // Flag to indicate rendering is done. Set to true by the render thread when it finishes.
         let render_done = Arc::new(AtomicBool::new(false));
         // Flag to indicate rendering should be cancelled. Set to true by the input thread on Esc key.
@@ -226,6 +228,8 @@ impl App {
                                 drop(input_event_rx);
                                 break;
                             }
+                            // Sleep a bit before trying again to avoid busy polling from
+                            // input_evet_rx (avg typing speed is much slower than this)
                             std::thread::sleep(Duration::from_millis(50));
                             continue;
                         }
@@ -447,16 +451,19 @@ impl App {
         Ok(number_option)
     }
 
-    /// Ask user for grid dimensions (width and height between 1 and 255)
+    /// Ask user for maze dimensions (width and height between 1 and 255)
     /// Returns None if user cancels input with Esc
     /// Returns Some((width, height)) if user inputs valid dimensions
-    fn ask_grid_dimensions(stdout: &mut Stdout) -> std::io::Result<Option<(u8, u8)>> {
+    fn ask_maze_dimensions(stdout: &mut Stdout) -> std::io::Result<Option<(u8, u8)>> {
         stdout.execute(style::PrintStyledContent(
-            "Enter maze dimensions (width and height between 1 and 255), or press Esc to exit:\r\n"
+            "Enter maze dimensions (width and height between 1 and 255), or press Esc to exit. Default values are based on terminal size.\r\n"
                 .with(Color::Blue),
         ))?;
 
-        let validate = |s: &str| {
+        let validate = |s: &str, default_size: u8| {
+            if s.trim().is_empty() {
+                return Ok(default_size);
+            }
             s.parse::<u8>()
                 .map_err(|_| "Please enter a number between 1 and 255".to_string())
                 .and_then(|n| match n {
@@ -465,7 +472,26 @@ impl App {
                 })
         };
 
-        let width = match App::prompt_with_validation(stdout, "Width: ", validate)? {
+        let (term_width, term_height) = terminal::size()?;
+
+        // Get default gtid dimensions based on terminal size. Make sure they are odd and at least 3.
+        let odd_and_min_3 = |n: u16| if n % 2 == 0 { n - 1 } else { n }.max(3);
+        let (default_grid_width, default_grid_height) = (
+            odd_and_min_3(term_width / GridCell::CELL_WIDTH),
+            odd_and_min_3(term_height),
+        );
+
+        // Default maze dimensions are half the grid dimensions, capped at u8::MAX
+        let (default_maze_width, default_maze_height) = (
+            (default_grid_width / 2).min(u8::MAX as u16) as u8,
+            (default_grid_height / 2).min(u8::MAX as u16) as u8,
+        );
+
+        // Validation closures based on default sizes
+        let validate_width = |s: &str| validate(s, default_maze_width);
+        let validate_height = |s: &str| validate(s, default_maze_height);
+
+        let width = match App::prompt_with_validation(stdout, "Width: ", validate_width)? {
             Some(w) => w,
             None => return Ok(None),
         };
@@ -475,7 +501,7 @@ impl App {
                 .attribute(Attribute::Bold),
         ))?;
 
-        let height = match App::prompt_with_validation(stdout, "Height: ", validate)? {
+        let height = match App::prompt_with_validation(stdout, "Height: ", validate_height)? {
             Some(h) => h,
             None => return Ok(None),
         };
@@ -580,16 +606,24 @@ impl App {
     fn check_resize(stdout: &mut Stdout, width: u16, height: u16) -> std::io::Result<bool> {
         let (term_width, term_height) = terminal::size()?;
         if term_width < width * GridCell::CELL_WIDTH || term_height < height {
+            let msg = format!(
+                "Terminal size is too small ({}x{}) for the grid dimensions ({}x{}) to display. Please resize the terminal.\r\n",
+                width * GridCell::CELL_WIDTH,
+                height,
+                width,
+                height
+            );
             execute!(
                 stdout,
                 terminal::Clear(ClearType::All),
                 cursor::MoveTo(0, 0),
+                style::PrintStyledContent(msg.with(Color::Yellow).attribute(Attribute::Bold)),
                 style::PrintStyledContent(
-                    "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
-                        .with(Color::Yellow)
-                        .attribute(Attribute::Bold)),
-                style::PrintStyledContent("Press Esc to exit...\r\n".with(Color::Blue).attribute(Attribute::Bold))
-                )?;
+                    "Press Esc to exit...\r\n"
+                        .with(Color::Blue)
+                        .attribute(Attribute::Bold)
+                )
+            )?;
             App::wait_for_esc()?;
             return Ok(false);
         }
