@@ -31,6 +31,24 @@ impl TrackedCell {
     }
 }
 
+impl Drop for TrackedCell {
+    fn drop(&mut self) {
+        // Iteratively drop parent references to avoid deep recursion
+        let mut current_parent = self.parent.take();
+        while let Some(parent) = current_parent {
+            if let Ok(mut strong_parent) = Rc::try_unwrap(parent) {
+                current_parent = strong_parent.parent.take();
+                // strong_parent is dropped here
+            } else {
+                break; // Parent is still referenced elsewhere
+            }
+        }
+        // Now self.parent is None, and all reachable parents have been dropped
+        // current_parent is dropped here if it exists, which decreases the reference count
+        // of this cell's parent
+    }
+}
+
 impl Eq for TrackedCell {}
 
 impl PartialEq for TrackedCell {
