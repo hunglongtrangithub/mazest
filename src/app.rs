@@ -149,7 +149,9 @@ impl App {
             }
         };
 
+        // Flag to indicate rendering is done. Set to true by the render thread when it finishes.
         let render_done = Arc::new(AtomicBool::new(false));
+        // Flag to indicate rendering should be cancelled. Set to true by the input thread on Esc key.
         let render_cancel = Arc::new(AtomicBool::new(false));
 
         let (input_event_tx, input_event_rx) = std::sync::mpsc::channel::<InputEvent>();
