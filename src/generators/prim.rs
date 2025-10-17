@@ -2,7 +2,7 @@ use rand::Rng;
 use rand_set::RandSetDefault;
 
 use crate::generators::get_rng;
-use crate::maze::{GridCell, Maze, Orientation, get_neighbors};
+use crate::maze::{Maze, Orientation, cell::GridCell, get_neighbors};
 
 /// Requires the maze to be at least 3x3.
 pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {

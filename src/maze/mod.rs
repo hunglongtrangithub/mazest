@@ -1,13 +1,10 @@
 pub mod cell;
-mod grid;
+pub mod grid;
 
 use std::sync::mpsc::Sender;
 
-use grid::Grid;
-
-pub use cell::{GridCell, PathType};
-
-use crate::GridEvent;
+use cell::{GridCell, PathType};
+use grid::{Grid, GridEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Orientation {

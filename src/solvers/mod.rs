@@ -6,8 +6,7 @@ mod bfs;
 mod dfs;
 mod dijkstra;
 
-use crate::GridCell;
-use crate::maze::Maze;
+use crate::maze::{Maze, cell::GridCell};
 use astar::solve_astart;
 use bfs::solve_bfs;
 use dfs::solve_dfs;

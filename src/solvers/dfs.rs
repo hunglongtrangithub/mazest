@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::TrackedCell;
-use crate::maze::{GridCell, Maze, Orientation};
+use crate::maze::{Maze, Orientation, cell::GridCell};
 
 pub fn solve_dfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
     if maze.is_empty() {

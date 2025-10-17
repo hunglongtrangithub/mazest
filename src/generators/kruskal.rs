@@ -1,6 +1,6 @@
 use crate::{
     generators::get_rng,
-    maze::{GridCell, Maze, Orientation},
+    maze::{Maze, Orientation, cell::GridCell},
 };
 use rand::seq::SliceRandom;
 

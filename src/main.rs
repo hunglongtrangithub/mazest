@@ -20,21 +20,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 
-use crate::maze::GridCell;
-
-#[derive(Debug)]
-enum GridEvent {
-    Initial {
-        cell: GridCell,
-        width: u16,
-        height: u16,
-    },
-    Update {
-        coord: (u16, u16),
-        old: GridCell,
-        new: GridCell,
-    },
-}
+use crate::maze::{cell::GridCell, grid::GridEvent};
 
 enum InputEvent {
     KeyPress(event::KeyEvent),
@@ -58,6 +44,33 @@ impl Default for App {
 }
 
 impl App {
+    fn set_panic_hook() {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            let _ = App::restore_terminal(&mut std::io::stdout()); // ignore any errors as we are already failing
+            hook(panic_info);
+        }));
+    }
+
+    fn setup_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+        terminal::enable_raw_mode()?;
+        App::set_panic_hook();
+        execute!(stdout, terminal::EnterAlternateScreen)?;
+        crossterm::execute!(
+            stdout,
+            terminal::Clear(ClearType::All),
+            cursor::Hide,
+            cursor::MoveTo(0, 0)
+        )?;
+        Ok(())
+    }
+
+    fn restore_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+        execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
+        terminal::disable_raw_mode()?;
+        Ok(())
+    }
+
     pub fn run(&self, stdout: &mut std::io::Stdout) -> std::io::Result<()> {
         // Ask user for grid dimensions
         let (width, height) = match App::ask_grid_dimensions(stdout)? {
@@ -515,33 +528,6 @@ impl App {
         )?;
 
         Ok(selected_option)
-    }
-
-    fn set_panic_hook() {
-        let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |panic_info| {
-            let _ = App::restore_terminal(&mut std::io::stdout()); // ignore any errors as we are already failing
-            hook(panic_info);
-        }));
-    }
-
-    fn setup_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
-        terminal::enable_raw_mode()?;
-        App::set_panic_hook();
-        execute!(stdout, terminal::EnterAlternateScreen)?;
-        crossterm::execute!(
-            stdout,
-            terminal::Clear(ClearType::All),
-            cursor::Hide,
-            cursor::MoveTo(0, 0)
-        )?;
-        Ok(())
-    }
-
-    fn restore_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
-        execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
-        terminal::disable_raw_mode()?;
-        Ok(())
     }
 
     fn calculate_render_refresh_time(&self, grid_width: u8, grid_height: u8) -> Duration {

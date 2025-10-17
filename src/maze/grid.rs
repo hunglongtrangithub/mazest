@@ -1,4 +1,3 @@
-use crate::GridEvent;
 use std::sync::mpsc::Sender;
 
 use super::cell::GridCell;
@@ -8,6 +7,20 @@ pub struct Grid {
     width: u16,
     height: u16,
     grid_event_tx: Option<Sender<GridEvent>>,
+}
+
+#[derive(Debug)]
+pub enum GridEvent {
+    Initial {
+        cell: GridCell,
+        width: u16,
+        height: u16,
+    },
+    Update {
+        coord: (u16, u16),
+        old: GridCell,
+        new: GridCell,
+    },
 }
 
 impl Grid {

@@ -1,7 +1,7 @@
 use std::{cmp::Reverse, collections::BinaryHeap, rc::Rc};
 
 use super::TrackedCell;
-use crate::maze::{GridCell, Maze, Orientation};
+use crate::maze::{Maze, Orientation, cell::GridCell};
 
 fn heuristic(a: (u8, u8), b: (u8, u8)) -> usize {
     // Using Manhattan distance as the heuristic
