@@ -1,5 +1,5 @@
 use std::{
-    io::Write,
+    io::{Stdout, Write},
     sync::{
         Arc,
         atomic::AtomicBool,
@@ -57,7 +57,7 @@ impl App {
 
     /// Setup terminal in raw mode and enter alternate screen
     /// Also sets a panic hook to restore terminal on panic
-    pub fn setup_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+    pub fn setup_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
         terminal::enable_raw_mode()?;
         App::set_panic_hook();
         execute!(stdout, terminal::EnterAlternateScreen)?;
@@ -72,14 +72,14 @@ impl App {
 
     /// Restore terminal to original state
     /// Leave alternate screen and disable raw mode
-    pub fn restore_terminal(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+    pub fn restore_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
         execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
         terminal::disable_raw_mode()?;
         Ok(())
     }
 
     /// Main application loop
-    pub fn run(&self, stdout: &mut std::io::Stdout) -> std::io::Result<()> {
+    pub fn run(&self, stdout: &mut Stdout) -> std::io::Result<()> {
         // Ask user for grid dimensions
         let (width, height) = match App::ask_grid_dimensions(stdout)? {
             Some(dims) => dims,
@@ -90,11 +90,12 @@ impl App {
         // Check if terminal height and width are sufficient
         let (term_width, term_height) = terminal::size()?;
         if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
-            stdout.execute(style::PrintStyledContent(
-                "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\nPress Esc to exit...\r\n"
+            execute!(stdout, style::PrintStyledContent(
+                "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
                     .with(Color::Yellow)
-                    .attribute(Attribute::Bold),
-            ))?;
+                    .attribute(Attribute::Bold)),
+                style::PrintStyledContent("Press Esc to exit...\r\n".with(Color::Blue).attribute(Attribute::Bold))
+            )?;
             // Wait for user to press Esc
             App::wait_for_esc()?;
             return Ok(());
@@ -327,7 +328,7 @@ impl App {
     /// Returns None if user cancels input with Esc
     /// Returns Some(T) if user inputs a valid input and presses Enter, where T is the validated type
     fn prompt_with_validation<F, T>(
-        stdout: &mut std::io::Stdout,
+        stdout: &mut Stdout,
         prompt: &str,
         validate: F,
     ) -> std::io::Result<Option<T>>
@@ -416,7 +417,7 @@ impl App {
     /// Ask user for grid dimensions (width and height between 1 and 255)
     /// Returns None if user cancels input with Esc
     /// Returns Some((width, height)) if user inputs valid dimensions
-    fn ask_grid_dimensions(stdout: &mut std::io::Stdout) -> std::io::Result<Option<(u8, u8)>> {
+    fn ask_grid_dimensions(stdout: &mut Stdout) -> std::io::Result<Option<(u8, u8)>> {
         stdout.execute(style::PrintStyledContent(
             "Enter maze dimensions (width and height between 1 and 255), or press Esc to exit:\r\n"
                 .with(Color::Blue),
@@ -458,7 +459,7 @@ impl App {
     /// Returns None if user cancels input with Esc
     /// Returns Some(T) if user selects an option and presses Enter, where T is the option type
     fn select_from_menu<T: std::fmt::Display + Copy>(
-        stdout: &mut std::io::Stdout,
+        stdout: &mut Stdout,
         prompt: &str,
         options: &[T],
     ) -> std::io::Result<Option<T>> {
@@ -539,18 +540,40 @@ impl App {
         self.render_refresh_rate * (u8::MAX as u32 / size as u32).pow(2)
     }
 
+    /// Check if terminal size is sufficient for the given grid dimensions
+    /// If not, display a message and wait for user to press Esc, then return Ok(false)
+    /// Returns Ok(true) if terminal size is sufficient
+    /// Returns Err if there was an I/O error
+    fn check_resize(stdout: &mut Stdout, width: u16, height: u16) -> std::io::Result<bool> {
+        let (term_width, term_height) = terminal::size()?;
+        if term_width < width * GridCell::CELL_WIDTH || term_height < height {
+            execute!(
+                stdout,
+                terminal::Clear(ClearType::All),
+                cursor::MoveTo(0, 0),
+                style::PrintStyledContent(
+                    "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
+                        .with(Color::Yellow)
+                        .attribute(Attribute::Bold)),
+                style::PrintStyledContent("Press Esc to exit...\r\n".with(Color::Blue).attribute(Attribute::Bold))
+                )?;
+            App::wait_for_esc()?;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
     /// Process and render all events in the event buffer
     /// Returns Ok(true) if processing completed successfully
     /// Returns Ok(false) if processing was cancelled
     /// Returns Err if there was an I/O error
     fn process_events(
         event_buffer: &mut Vec<GridEvent>,
-        stdout: &mut std::io::Stdout,
+        stdout: &mut Stdout,
         grid_dims: &mut Option<(u16, u16)>,
         render_refresh_time: Duration,
         cancel: &AtomicBool,
     ) -> std::io::Result<bool> {
-        let resize_msg = "Terminal size is too small for the maze dimensions to display. Please resize the terminal.";
         for event in event_buffer.drain(..) {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Ok(false);
@@ -563,13 +586,10 @@ impl App {
                     height,
                 } => {
                     *grid_dims = Some((width, height));
-                    // Check if terminal height and width are sufficient
-                    let (term_width, term_height) = terminal::size()?;
-                    if term_width < width * GridCell::CELL_WIDTH || term_height < height {
-                        print!("{}\r\n", resize_msg);
-                        stdout.flush()?;
+                    if !App::check_resize(stdout, width, height)? {
                         return Ok(false);
                     }
+
                     // Clear screen
                     // Move to top-left corner
                     // Print the whole grid with the specified cell
@@ -589,15 +609,11 @@ impl App {
                     new,
                 } => match grid_dims {
                     Some((width, height)) => {
-                        // Move the cursor to the specified coordinate and print the
-                        // new cell using the grid dimensions
-
-                        let (term_width, term_height) = terminal::size()?;
-                        if term_width < *width * GridCell::CELL_WIDTH || term_height < *height {
-                            print!("{}\r\n", resize_msg);
-                            stdout.flush()?;
+                        if !App::check_resize(stdout, *width, *height)? {
                             return Ok(false);
                         }
+                        // Move the cursor to the specified coordinate and print the
+                        // new cell using the grid dimensions
                         queue!(
                             stdout,
                             cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
