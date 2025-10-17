@@ -87,6 +87,23 @@ impl App {
                 return Ok(());
             }
         };
+
+        // Ask if user wants to loop generation and solving
+        let loop_animation = match App::prompt_with_validation(
+            stdout,
+            "Loop maze generation and solving? When looped, press Esc to stop any time. (y/n): ",
+            |s: &str| match s.to_lowercase().as_str() {
+                "y" | "yes" => Ok(true),
+                "n" | "no" => Ok(false),
+                _ => Err("Please enter 'y' or 'n'".to_string()),
+            },
+        )? {
+            Some(b) => b,
+            None => {
+                return Ok(());
+            }
+        };
+
         // Check if terminal height and width are sufficient
         let (term_width, term_height) = terminal::size()?;
         if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
@@ -162,7 +179,6 @@ impl App {
         });
 
         let (grid_event_tx, grid_event_rx) = std::sync::mpsc::channel::<GridEvent>();
-        let maze = maze::Maze::new(width, height, Some(grid_event_tx));
 
         // Spawn a thread to listen for grid updates and render the maze
         let render_refresh_time = self.calculate_render_refresh_time(width, height);
@@ -180,8 +196,23 @@ impl App {
         });
 
         // Spawn a thread to generate maze and solve it
-        let compute_thread_handle =
-            std::thread::spawn(move || -> bool { App::compute(maze, generator, solver) });
+        let render_cancel_for_compute = render_cancel.clone();
+        let grid_event_tx_for_compute = grid_event_tx.clone();
+        let compute_thread_handle = std::thread::spawn(move || -> bool {
+            if !loop_animation {
+                let mut maze = maze::Maze::new(width, height, Some(grid_event_tx_for_compute));
+                return App::compute(&mut maze, generator, solver);
+            }
+            loop {
+                let mut maze =
+                    maze::Maze::new(width, height, Some(grid_event_tx_for_compute.clone()));
+                let goal_reached = App::compute(&mut maze, generator, solver);
+                // Check if rendering was cancelled
+                if render_cancel_for_compute.load(std::sync::atomic::Ordering::Relaxed) {
+                    return goal_reached;
+                }
+            }
+        });
 
         // Listen for user input to cancel rendering
         loop {
@@ -304,12 +335,12 @@ impl App {
 
     /// Generate and solve the maze
     /// Returns whether the goal was reached
-    fn compute(mut maze: maze::Maze, generator: Generator, solver: solvers::Solver) -> bool {
+    fn compute(maze: &mut maze::Maze, generator: Generator, solver: solvers::Solver) -> bool {
         // Generate the maze using the selected algorithm
-        generate_maze(&mut maze, generator, None);
+        generate_maze(maze, generator, None);
 
         // Solve the maze using the selected algorithm
-        solvers::solve_maze(&mut maze, solver)
+        solvers::solve_maze(maze, solver)
         // Maze is dropped here, which will close the grid event channel
     }
 
@@ -589,6 +620,7 @@ impl App {
                 } => {
                     *grid_dims = Some((width, height));
                     if !App::check_resize(stdout, width, height)? {
+                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                         return Ok(false);
                     }
 
@@ -612,6 +644,7 @@ impl App {
                 } => match grid_dims {
                     Some((width, height)) => {
                         if !App::check_resize(stdout, *width, *height)? {
+                            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                             return Ok(false);
                         }
                         // Move the cursor to the specified coordinate and print the
