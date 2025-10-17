@@ -3,8 +3,12 @@ mod maze;
 mod solvers;
 
 use std::{
-    io::{Read, Write},
-    sync::mpsc::Receiver,
+    io::Write,
+    sync::{
+        Arc,
+        atomic::AtomicBool,
+        mpsc::{Receiver, Sender},
+    },
     time::Duration,
 };
 
@@ -30,6 +34,11 @@ enum GridEvent {
         old: GridCell,
         new: GridCell,
     },
+}
+
+enum InputEvent {
+    KeyPress(event::KeyEvent),
+    Resize(u16, u16),
 }
 
 pub struct App {
@@ -60,12 +69,13 @@ impl App {
         // Check if terminal height and width are sufficient
         let (term_width, term_height) = terminal::size()?;
         if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
-            print!(
-                "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
-            );
-            print!("Press Enter to exit...\r\n");
-            stdout.flush()?;
-            App::wait_for_enter()?;
+            stdout.execute(style::PrintStyledContent(
+                "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\nPress Esc to exit...\r\n"
+                    .with(Color::Yellow)
+                    .attribute(Attribute::Bold),
+            ))?;
+            // Wait for user to press Esc
+            App::wait_for_esc()?;
             return Ok(());
         }
 
@@ -117,25 +127,180 @@ impl App {
             }
         };
 
-        // TODO: implement canceling generation/solving with Esc key
-        let goal_reached = self.start_rendering(width, height, generator, solver)?;
+        let render_done = Arc::new(AtomicBool::new(false));
+        let render_cancel = Arc::new(AtomicBool::new(false));
 
-        if goal_reached {
-            print!("Maze solved! Goal reached.\r\n");
-        } else {
-            print!("No path found to the goal.\r\n");
+        let (input_event_tx, input_event_rx) = std::sync::mpsc::channel::<InputEvent>();
+        let render_done_for_input = render_done.clone();
+        // Spawn a thread to listen for user input
+        let input_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
+            App::listen_to_user_input(input_event_tx, &render_done_for_input)
+        });
+
+        let (grid_event_tx, grid_event_rx) = std::sync::mpsc::channel::<GridEvent>();
+        let maze = maze::Maze::new(width, height, Some(grid_event_tx));
+
+        // Spawn a thread to listen for grid updates and render the maze
+        let render_refresh_time = self.calculate_render_refresh_time(width, height);
+        let render_interval = self.render_interval;
+        let render_cancel_for_render = render_cancel.clone();
+        let render_done_for_render = render_done.clone();
+        let render_thread_handle = std::thread::spawn(move || {
+            App::render(
+                render_interval,
+                grid_event_rx,
+                render_refresh_time,
+                &render_cancel_for_render,
+                &render_done_for_render,
+            )
+        });
+
+        // Spawn a thread to generate maze and solve it
+        let compute_thread_handle =
+            std::thread::spawn(move || -> bool { App::compute(maze, generator, solver) });
+
+        // Listen for user input to cancel rendering
+        loop {
+            match input_event_rx.try_recv() {
+                Err(e) => {
+                    match e {
+                        std::sync::mpsc::TryRecvError::Empty => {
+                            // No input, check if render is done
+                            if render_done.load(std::sync::atomic::Ordering::Relaxed) {
+                                // Render is done, break the loop
+                                drop(input_event_rx);
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(50));
+                            continue;
+                        }
+                        std::sync::mpsc::TryRecvError::Disconnected => {
+                            // Input thread has exited, break the loop
+                            break;
+                        }
+                    }
+                }
+                Ok(event) => match event {
+                    InputEvent::KeyPress(key_event) => {
+                        if key_event.code == KeyCode::Esc {
+                            render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                            // Close the channel to signal input thread to exit (if not already)
+                            drop(input_event_rx);
+                            break;
+                        }
+                    }
+                    InputEvent::Resize(_width, _height) => {
+                        // Ignore resize events for now
+                        // TODO: Send terminal resize events to the render thread
+                    }
+                },
+            }
         }
-        print!("Press Enter to exit...\r\n");
-        stdout.flush()?;
-        App::wait_for_enter()?;
+
+        // Wait for input thread to finish
+        let _ = input_thread_handle.join();
+
+        // Wait for compute thread to finish
+        let goal_reached = compute_thread_handle
+            .join()
+            .expect("Compute thread panicked");
+
+        // Wait for render thread to finish
+        let completed = render_thread_handle
+            .join()
+            .expect("Render thread panicked")?;
+
+        if !completed {
+            return Ok(());
+        }
+
+        let msg = if goal_reached {
+            "Path found!\r\n"
+        } else {
+            "No path found.\r\n"
+        };
+        stdout.execute(style::PrintStyledContent(
+            msg.with(Color::Green).attribute(Attribute::Bold),
+        ))?;
+
+        stdout.execute(style::PrintStyledContent(
+            "Press Esc to exit...\r\n"
+                .with(Color::Blue)
+                .attribute(Attribute::Bold),
+        ))?;
+        // Wait for user to press Esc
+        App::wait_for_esc()?;
         Ok(())
     }
 
-    fn wait_for_enter() -> std::io::Result<()> {
-        let mut buf = [0u8; 1];
-        while std::io::stdin().read(&mut buf)? == 1 {
-            if buf[0] == b'\r' {
-                break;
+    /// Listen for user input events (key presses and resize)
+    /// Returns the thread handle and the receiver for input events
+    fn listen_to_user_input(
+        input_event_tx: Sender<InputEvent>,
+        render_done: &AtomicBool,
+    ) -> std::io::Result<()> {
+        loop {
+            // Check if render is done
+            if render_done.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(());
+            }
+
+            // Poll for events with a timeout
+            if !event::poll(Duration::from_millis(100))? {
+                // No event available, continue loop to check render_done again
+                continue;
+            }
+
+            // Read the next event
+            // We only care about key presses and resize events
+            let input_event = match event::read()? {
+                event::Event::Key(key_event) if key_event.kind == event::KeyEventKind::Press => {
+                    InputEvent::KeyPress(key_event)
+                }
+                event::Event::Resize(width, height) => InputEvent::Resize(width, height),
+                _ => continue,
+            };
+            // Should exit input thread on Esc key
+            let should_exit = matches!(
+                input_event,
+                InputEvent::KeyPress(event::KeyEvent {
+                    code: KeyCode::Esc,
+                    ..
+                })
+            );
+            if input_event_tx.send(input_event).is_err() {
+                // Receiver has been dropped, exit the thread
+                return Ok(());
+            }
+            if should_exit {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Generate and solve the maze
+    /// Returns whether the goal was reached
+    fn compute(
+        mut maze: maze::Maze,
+        generator: generators::Generator,
+        solver: solvers::Solver,
+    ) -> bool {
+        // Generate the maze using the selected algorithm
+        generators::generate_maze(&mut maze, generator, None);
+
+        // Solve the maze using the selected algorithm
+        solvers::solve_maze(&mut maze, solver)
+        // Maze is dropped here, which will close the grid event channel
+    }
+
+    /// Wait for the user to press the Esc key
+    /// This function blocks until Esc is pressed
+    fn wait_for_esc() -> std::io::Result<()> {
+        loop {
+            if let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? {
+                if code == KeyCode::Esc && kind == event::KeyEventKind::Press {
+                    break;
+                }
             }
         }
         Ok(())
@@ -384,45 +549,22 @@ impl App {
         self.render_refresh_rate * (u8::MAX as u32 / size as u32).pow(2)
     }
 
-    fn start_rendering(
-        &self,
-        width: u8,
-        height: u8,
-        generator: generators::Generator,
-        solver: solvers::Solver,
-    ) -> std::io::Result<bool> {
-        let (grid_event_tx, grid_event_rx) = std::sync::mpsc::channel::<GridEvent>();
-        let mut maze = maze::Maze::new(width, height, Some(grid_event_tx));
-
-        // Spawn a thread to listen for grid updates and render the maze
-        let render_refresh_time = self.calculate_render_refresh_time(width, height);
-        let render_interval = self.render_interval;
-        let render_thread_handle = std::thread::spawn(move || {
-            App::render_loop(render_interval, grid_event_rx, render_refresh_time)
-        });
-
-        // Generate the maze using the selected algorithm
-        generators::generate_maze(&mut maze, generator, None);
-
-        // Solve the maze using the selected algorithm
-        let goal_reached = solvers::solve_maze(&mut maze, solver);
-
-        drop(maze); // Ensure maze is dropped and sender is closed
-
-        // Wait for render thread to finish - ignore any errors
-        render_thread_handle.join().ok();
-
-        Ok(goal_reached)
-    }
-
+    /// Process and render all events in the event buffer
+    /// Returns Ok(true) if processing completed successfully
+    /// Returns Ok(false) if processing was cancelled
+    /// Returns Err if there was an I/O error
     fn process_events(
         event_buffer: &mut Vec<GridEvent>,
         stdout: &mut std::io::Stdout,
         grid_dims: &mut Option<(u16, u16)>,
         render_refresh_time: Duration,
-    ) -> std::io::Result<()> {
+        cancel: &AtomicBool,
+    ) -> std::io::Result<bool> {
         let resize_msg = "Terminal size is too small for the maze dimensions to display. Please resize the terminal.";
         for event in event_buffer.drain(..) {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(false);
+            }
             // print!("Last rendered event: {:?}\r\n", event);
             match event {
                 GridEvent::Initial {
@@ -436,7 +578,7 @@ impl App {
                     if term_width < width * GridCell::CELL_WIDTH || term_height < height {
                         print!("{}\r\n", resize_msg);
                         stdout.flush()?;
-                        return Ok(());
+                        return Ok(false);
                     }
                     // Clear screen
                     // Move to top-left corner
@@ -464,7 +606,7 @@ impl App {
                         if term_width < *width * GridCell::CELL_WIDTH || term_height < *height {
                             print!("{}\r\n", resize_msg);
                             stdout.flush()?;
-                            return Ok(());
+                            return Ok(false);
                         }
                         queue!(
                             stdout,
@@ -480,14 +622,20 @@ impl App {
             // Sleep a bit to simulate rendering time
             std::thread::sleep(render_refresh_time);
         }
-        Ok(())
+        Ok(true)
     }
 
-    fn render_loop(
+    /// Render loop that processes events from the receiver and renders them at specified intervals
+    /// Returns Ok(true) if rendering completed successfully
+    /// Returns Ok(false) if rendering was cancelled
+    /// Returns Err if there was an I/O error
+    fn render(
         render_interval: Duration,
         receiver: Receiver<GridEvent>,
         render_refresh_time: Duration,
-    ) -> std::io::Result<()> {
+        cancel: &AtomicBool,
+        done: &AtomicBool,
+    ) -> std::io::Result<bool> {
         let mut stdout = std::io::stdout();
         let mut event_buffer = Vec::new();
         let mut last_render = std::time::Instant::now();
@@ -499,12 +647,17 @@ impl App {
             match receiver.recv() {
                 Err(_e) => {
                     // Channel disconnected, render the remaining buffer and exit
-                    App::process_events(
+                    if !App::process_events(
                         &mut event_buffer,
                         &mut stdout,
                         &mut grid_dims,
                         render_refresh_time,
-                    )?;
+                        cancel,
+                    )? {
+                        // Cancelled
+                        done.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return Ok(false);
+                    }
                     break;
                 }
                 Ok(event) => {
@@ -513,21 +666,27 @@ impl App {
                         // Reset the timer
                         last_render = std::time::Instant::now();
                         // Render all buffered events
-                        App::process_events(
+                        if !App::process_events(
                             &mut event_buffer,
                             &mut stdout,
                             &mut grid_dims,
                             render_refresh_time,
-                        )?;
+                            cancel,
+                        )? {
+                            // Cancelled
+                            done.store(true, std::sync::atomic::Ordering::Relaxed);
+                            return Ok(false);
+                        }
                     }
                 }
             }
         }
         // Move cursor below the maze after exiting
         if let Some((_, height)) = grid_dims {
-            execute!(stdout, cursor::MoveTo(0, height), cursor::Show)?;
+            execute!(stdout, cursor::MoveTo(0, height), cursor::Show,)?;
         }
-        Ok(())
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(true)
     }
 }
 
