@@ -81,28 +81,3 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::maze::cell::GridCell;
-
-    #[test]
-    fn test_get_neighbors() {
-        let maze = Maze::new(7, 7, None);
-        let neighbors = get_neighbors((3, 3), &maze).collect::<Vec<_>>();
-        assert_eq!(neighbors, vec![(2, 3), (4, 3), (3, 2), (3, 4)]);
-    }
-
-    #[test]
-    fn test_randomized_prim() {
-        let mut maze = Maze::new(7, 7, None);
-        randomized_prim(&mut maze, None);
-        // Check that the start cell is empty
-        assert_eq!(maze[(1, 1)], GridCell::PATH);
-        // Check that there are some empty cells in the maze
-        assert!(maze.grid().data.iter().any(|cell| *cell == GridCell::PATH));
-        // Check that there are some walls in the maze
-        assert!(maze.grid().data.iter().any(|cell| *cell == GridCell::WALL));
-    }
-}

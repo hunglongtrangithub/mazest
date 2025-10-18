@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 use super::cell::GridCell;
 
 pub struct Grid {
-    pub data: Box<[GridCell]>,
+    data: Box<[GridCell]>,
     width: u16,
     height: u16,
     grid_event_tx: Option<Sender<GridEvent>>,
