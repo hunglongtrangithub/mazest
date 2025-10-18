@@ -199,16 +199,13 @@ impl App {
 
         // Spawn a thread to generate maze and solve it
         let render_cancel_for_compute = render_cancel.clone();
-        let grid_event_tx_for_compute = grid_event_tx.clone();
         let compute_thread_handle = std::thread::spawn(move || -> bool {
             if !loop_animation {
-                let mut maze = maze::Maze::new(width, height, Some(grid_event_tx_for_compute));
-                return App::compute(&mut maze, generator, solver);
+                return App::compute(width, height, grid_event_tx, generator, solver);
             }
             loop {
-                let mut maze =
-                    maze::Maze::new(width, height, Some(grid_event_tx_for_compute.clone()));
-                let goal_reached = App::compute(&mut maze, generator, solver);
+                let goal_reached =
+                    App::compute(width, height, grid_event_tx.clone(), generator, solver);
                 // Check if rendering was cancelled
                 if render_cancel_for_compute.load(std::sync::atomic::Ordering::Relaxed) {
                     return goal_reached;
@@ -229,7 +226,7 @@ impl App {
                                 break;
                             }
                             // Sleep a bit before trying again to avoid busy polling from
-                            // input_evet_rx (avg typing speed is much slower than this)
+                            // input_event_rx (avg typing speed is much slower than this)
                             std::thread::sleep(Duration::from_millis(50));
                             continue;
                         }
@@ -339,12 +336,19 @@ impl App {
 
     /// Generate and solve the maze
     /// Returns whether the goal was reached
-    fn compute(maze: &mut maze::Maze, generator: Generator, solver: solvers::Solver) -> bool {
+    fn compute(
+        width: u8,
+        height: u8,
+        grid_event_tx: Sender<GridEvent>,
+        generator: Generator,
+        solver: solvers::Solver,
+    ) -> bool {
+        let mut maze = maze::Maze::new(width, height, Some(grid_event_tx));
         // Generate the maze using the selected algorithm
-        generate_maze(maze, generator, None);
+        generate_maze(&mut maze, generator, None);
 
         // Solve the maze using the selected algorithm
-        solvers::solve_maze(maze, solver)
+        solvers::solve_maze(&mut maze, solver)
         // Maze is dropped here, which will close the grid event channel
     }
 
@@ -474,7 +478,7 @@ impl App {
 
         let (term_width, term_height) = terminal::size()?;
 
-        // Get default gtid dimensions based on terminal size. Make sure they are odd and at least 3.
+        // Get default grid dimensions based on terminal size. Make sure they are odd and at least 3.
         let odd_and_min_3 = |n: u16| if n % 2 == 0 { n - 1 } else { n }.max(3);
         let (default_grid_width, default_grid_height) = (
             odd_and_min_3(term_width / GridCell::CELL_WIDTH),
