@@ -151,18 +151,12 @@ impl App {
         };
 
         // Ask if user wants to loop generation and solving
-        let loop_animation = match App::prompt_with_validation(
+        let loop_animation = match App::select_from_menu(
             stdout,
-            "Loop maze generation and solving? When looped, press Esc to stop any time. ([y]/n): ",
-            |s: &str| match s.to_lowercase().as_str() {
-                "y" | "yes" => Ok(true),
-                "n" | "no" => Ok(false),
-                // If empty, default to true
-                "" => Ok(true),
-                _ => Err("Please enter 'y' or 'n'".to_string()),
-            },
+            "Loop maze generation and solving? (use arrow keys and Enter, or Esc to exit):",
+            &["Yes", "No"],
         )? {
-            Some(b) => b,
+            Some(choice) => choice == "Yes",
             None => {
                 return Ok(());
             }
@@ -734,7 +728,6 @@ impl App {
                         cancel,
                     )? {
                         // Cancelled
-                        done.store(true, std::sync::atomic::Ordering::Relaxed);
                         return Ok(false);
                     }
                     break;
@@ -753,7 +746,6 @@ impl App {
                             cancel,
                         )? {
                             // Cancelled
-                            done.store(true, std::sync::atomic::Ordering::Relaxed);
                             return Ok(false);
                         }
                     }
