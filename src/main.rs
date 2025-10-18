@@ -1,9 +1,4 @@
-mod app;
-mod generators;
-mod maze;
-mod solvers;
-
-use crate::app::App;
+use mazest::app::App;
 
 fn main() -> std::io::Result<()> {
     let mut stdout = std::io::stdout();

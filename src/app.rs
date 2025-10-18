@@ -16,10 +16,13 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 
-use crate::maze::{cell::GridCell, grid::GridEvent};
 use crate::{
     generators::{Generator, generate_maze},
     maze, solvers,
+};
+use crate::{
+    maze::{cell::GridCell, grid::GridEvent},
+    solvers::Solver,
 };
 
 enum InputEvent {
@@ -29,7 +32,7 @@ enum InputEvent {
 
 pub struct App {
     /// Interval at which to render the event buffer
-    render_interval: Duration,
+    pub render_interval: Duration,
     /// Time taken to render each grid update when grid size is u8::MAX
     render_refresh_rate: Duration,
 }
@@ -44,7 +47,7 @@ impl Default for App {
 }
 
 impl App {
-    const MAX_EVENTS_IN_BUFFER: usize = 1000;
+    pub const MAX_EVENTS_IN_BUFFER: usize = 1000;
     /// Set a panic hook to restore terminal state on panic
     /// This ensures that the terminal is not left in raw mode or alternate screen on panic
     /// even if the panic occurs in a different thread
@@ -285,6 +288,76 @@ impl App {
         ))?;
         // Wait for user to press Esc
         App::wait_for_esc()?;
+        Ok(())
+    }
+
+    /// Profiling mode: automatically determine maze dimensions based on terminal size
+    /// and run the maze generation and solving without user input
+    pub fn profile(
+        &self,
+        width: u8,
+        height: u8,
+        solver: Solver,
+        generator: Generator,
+        num_animation_iterations: Option<usize>,
+    ) -> std::io::Result<()> {
+        let (grid_event_tx, grid_event_rx) =
+            std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_BUFFER);
+
+        // Spawn a thread to listen for grid updates and render the maze
+        let render_refresh_time = self.calculate_render_refresh_time(width, height);
+        let render_interval = self.render_interval;
+        let render_thread_handle = std::thread::spawn(move || {
+            let mut event_buffer = Vec::new();
+            let mut last_render = std::time::Instant::now();
+            loop {
+                match grid_event_rx.recv() {
+                    Err(_e) => {
+                        // Channel disconnected, exit the thread
+                        for _event in event_buffer.drain(..) {
+                            std::thread::sleep(render_refresh_time);
+                        }
+                        break;
+                    }
+                    Ok(event) => {
+                        // For profiling mode, we just discard the events
+                        // In a real application, we could log them or analyze them
+                        event_buffer.push(event);
+                        if last_render.elapsed() >= render_interval
+                            || event_buffer.len() >= App::MAX_EVENTS_IN_BUFFER
+                        {
+                            // Reset the timer
+                            last_render = std::time::Instant::now();
+
+                            // Simulate rendering time
+                            for _ in event_buffer.drain(..) {
+                                std::thread::sleep(render_refresh_time);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let compute_thread_handle = std::thread::spawn(move || match num_animation_iterations {
+            Some(iterations) => {
+                for _ in 0..iterations {
+                    App::compute(width, height, grid_event_tx.clone(), generator, solver);
+                }
+            }
+            None => {
+                App::compute(width, height, grid_event_tx, generator, solver);
+            }
+        });
+
+        // Wait for compute thread to finish
+        compute_thread_handle
+            .join()
+            .expect("Compute thread panicked");
+
+        // Wait for render thread to finish
+        render_thread_handle.join().expect("Render thread panicked");
+
         Ok(())
     }
 
