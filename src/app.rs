@@ -11,7 +11,7 @@ use std::{
 use crossterm::{
     ExecutableCommand, QueueableCommand, cursor,
     event::{self, KeyCode},
-    execute, queue,
+    queue,
     style::{self, Attribute, Color, Stylize},
     terminal::{self, ClearType},
 };
@@ -61,20 +61,22 @@ impl App {
     pub fn setup_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
         terminal::enable_raw_mode()?;
         App::set_panic_hook();
-        execute!(stdout, terminal::EnterAlternateScreen)?;
-        crossterm::execute!(
+        crossterm::queue!(
             stdout,
+            terminal::EnterAlternateScreen,
             terminal::Clear(ClearType::All),
             cursor::Hide,
             cursor::MoveTo(0, 0)
         )?;
+        stdout.flush()?;
         Ok(())
     }
 
     /// Restore terminal to original state
     /// Leave alternate screen and disable raw mode
     pub fn restore_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
-        execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
+        queue!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
+        stdout.flush()?;
         terminal::disable_raw_mode()?;
         Ok(())
     }
@@ -92,12 +94,13 @@ impl App {
         // Check if terminal height and width are sufficient
         let (term_width, term_height) = terminal::size()?;
         if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
-            execute!(stdout, style::PrintStyledContent(
+            queue!(stdout, style::PrintStyledContent(
                 "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
                     .with(Color::Yellow)
                     .attribute(Attribute::Bold)),
                 style::PrintStyledContent("Press Esc to exit...\r\n".with(Color::Blue).attribute(Attribute::Bold))
             )?;
+            stdout.flush()?;
             // Wait for user to press Esc
             App::wait_for_esc()?;
             return Ok(());
@@ -373,7 +376,8 @@ impl App {
         F: Fn(&str) -> Result<T, String>,
     {
         // Save cursor position so we can restore / redraw
-        execute!(stdout, cursor::Hide, cursor::SavePosition)?;
+        queue!(stdout, cursor::Hide, cursor::SavePosition)?;
+        stdout.flush()?;
 
         let mut input = String::new();
 
@@ -401,7 +405,7 @@ impl App {
                 }
             }
 
-            execute!(stdout, style::Print(&input), style::ResetColor)?;
+            queue!(stdout, style::Print(&input), style::ResetColor)?;
 
             stdout.queue(style::Print(" \r\n"))?;
 
@@ -441,12 +445,13 @@ impl App {
             }
         };
         // Cleanup
-        execute!(
+        queue!(
             stdout,
             cursor::RestorePosition,
             terminal::Clear(ClearType::FromCursorDown),
             cursor::Show
         )?;
+        stdout.flush()?;
 
         Ok(number_option)
     }
@@ -584,12 +589,13 @@ impl App {
             }
         };
         // Cleanup
-        execute!(
+        queue!(
             stdout,
             cursor::RestorePosition,
             terminal::Clear(ClearType::FromCursorDown),
             cursor::Show
         )?;
+        stdout.flush()?;
 
         Ok(selected_option)
     }
@@ -613,7 +619,7 @@ impl App {
                 width,
                 height
             );
-            execute!(
+            queue!(
                 stdout,
                 terminal::Clear(ClearType::All),
                 cursor::MoveTo(0, 0),
@@ -624,6 +630,7 @@ impl App {
                         .attribute(Attribute::Bold)
                 )
             )?;
+            stdout.flush()?;
             App::wait_for_esc()?;
             return Ok(false);
         }
@@ -645,7 +652,7 @@ impl App {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Ok(false);
             }
-            // print!("Last rendered event: {:?}\r\n", event);
+
             match event {
                 GridEvent::Initial {
                     cell,
@@ -716,7 +723,9 @@ impl App {
         let mut last_render = std::time::Instant::now();
         let mut grid_dims: Option<(u16, u16)> = None;
 
-        execute!(stdout, terminal::Clear(ClearType::All), cursor::Hide,)?;
+        queue!(stdout, terminal::Clear(ClearType::All), cursor::Hide)?;
+        stdout.flush()?;
+
         loop {
             // Block and wait for the next event
             match receiver.recv() {
@@ -741,6 +750,7 @@ impl App {
                     {
                         // Reset the timer
                         last_render = std::time::Instant::now();
+
                         // Render all buffered events
                         if !App::process_events(
                             &mut event_buffer,
@@ -758,7 +768,8 @@ impl App {
         }
         // Move cursor below the maze after exiting
         if let Some((_, height)) = grid_dims {
-            execute!(stdout, cursor::MoveTo(0, height), cursor::Show,)?;
+            queue!(stdout, cursor::MoveTo(0, height), cursor::Show,)?;
+            stdout.flush()?;
         }
         done.store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(true)
