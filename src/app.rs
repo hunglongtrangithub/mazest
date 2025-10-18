@@ -44,6 +44,7 @@ impl Default for App {
 }
 
 impl App {
+    const MAX_EVENTS_IN_BUFFER: usize = 1000;
     /// Set a panic hook to restore terminal state on panic
     /// This ensures that the terminal is not left in raw mode or alternate screen on panic
     /// even if the panic occurs in a different thread
@@ -174,7 +175,8 @@ impl App {
             App::listen_to_user_input(input_event_tx, &render_done_for_input)
         });
 
-        let (grid_event_tx, grid_event_rx) = std::sync::mpsc::channel::<GridEvent>();
+        let (grid_event_tx, grid_event_rx) =
+            std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_BUFFER);
 
         // Spawn a thread to listen for grid updates and render the maze
         let render_refresh_time = self.calculate_render_refresh_time(width, height);
@@ -333,7 +335,7 @@ impl App {
     fn compute(
         width: u8,
         height: u8,
-        grid_event_tx: Sender<GridEvent>,
+        grid_event_tx: std::sync::mpsc::SyncSender<GridEvent>,
         generator: Generator,
         solver: solvers::Solver,
     ) -> bool {
@@ -343,7 +345,7 @@ impl App {
 
         // Solve the maze using the selected algorithm
         solvers::solve_maze(&mut maze, solver)
-        // Maze is dropped here, which will close the grid event channel
+        // Maze is dropped here, as well as the grid_event_tx sender
     }
 
     /// Wait for the user to press the Esc key
@@ -712,7 +714,7 @@ impl App {
         let mut stdout = std::io::stdout();
         let mut event_buffer = Vec::new();
         let mut last_render = std::time::Instant::now();
-        let mut grid_dims = None;
+        let mut grid_dims: Option<(u16, u16)> = None;
 
         execute!(stdout, terminal::Clear(ClearType::All), cursor::Hide,)?;
         loop {
@@ -734,7 +736,9 @@ impl App {
                 }
                 Ok(event) => {
                     event_buffer.push(event);
-                    if last_render.elapsed() >= render_interval {
+                    if last_render.elapsed() >= render_interval
+                        || event_buffer.len() >= App::MAX_EVENTS_IN_BUFFER
+                    {
                         // Reset the timer
                         last_render = std::time::Instant::now();
                         // Render all buffered events

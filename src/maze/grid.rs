@@ -1,12 +1,10 @@
-use std::sync::mpsc::Sender;
-
 use super::cell::GridCell;
 
 pub struct Grid {
     data: Box<[GridCell]>,
     width: u16,
     height: u16,
-    grid_event_tx: Option<Sender<GridEvent>>,
+    grid_event_tx: Option<std::sync::mpsc::SyncSender<GridEvent>>,
 }
 
 #[derive(Debug)]
@@ -28,7 +26,7 @@ impl Grid {
         width: u16,
         height: u16,
         cell: GridCell,
-        grid_event_tx: Option<Sender<GridEvent>>,
+        grid_event_tx: Option<std::sync::mpsc::SyncSender<GridEvent>>,
     ) -> Self {
         let data = vec![cell; width as usize * height as usize].into_boxed_slice();
         if let Some(s) = &grid_event_tx {
@@ -69,6 +67,7 @@ impl Grid {
         if old != cell {
             self.data[idx] = cell;
             if let Some(sender) = &self.grid_event_tx {
+                // This operation will block if the channel is full, which is acceptable behavior
                 let _ = sender.send(GridEvent::Update {
                     coord,
                     old,
