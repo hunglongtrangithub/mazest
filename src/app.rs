@@ -40,14 +40,16 @@ pub struct App {
 impl Default for App {
     fn default() -> Self {
         Self {
-            render_interval: Duration::from_millis(1000),
+            render_interval: Duration::from_millis(100),
             render_refresh_rate: Duration::from_micros(20),
         }
     }
 }
 
 impl App {
-    pub const MAX_EVENTS_IN_BUFFER: usize = 1000;
+    pub const MAX_EVENTS_IN_CHANNEL_BUFFER: usize = 1000;
+    pub const MAX_EVENTS_IN_RENDER_BUFFER: usize = 1000;
+
     /// Set a panic hook to restore terminal state on panic
     /// This ensures that the terminal is not left in raw mode or alternate screen on panic
     /// even if the panic occurs in a different thread
@@ -187,7 +189,7 @@ impl App {
         });
 
         let (grid_event_tx, grid_event_rx) =
-            std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_BUFFER);
+            std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_CHANNEL_BUFFER);
 
         // Spawn a thread to listen for grid updates and render the maze
         let render_refresh_time = self.calculate_render_refresh_time(width, height);
@@ -308,7 +310,7 @@ impl App {
         num_animation_iterations: Option<usize>,
     ) -> std::io::Result<()> {
         let (grid_event_tx, grid_event_rx) =
-            std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_BUFFER);
+            std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_CHANNEL_BUFFER);
 
         // Spawn a thread to listen for grid updates and render the maze
         let render_refresh_time = self.calculate_render_refresh_time(width, height);
@@ -330,7 +332,7 @@ impl App {
                         // In a real application, we could log them or analyze them
                         event_buffer.push(event);
                         if last_render.elapsed() >= render_interval
-                            || event_buffer.len() >= App::MAX_EVENTS_IN_BUFFER
+                            || event_buffer.len() >= App::MAX_EVENTS_IN_CHANNEL_BUFFER
                         {
                             // Reset the timer
                             last_render = std::time::Instant::now();
@@ -827,7 +829,7 @@ impl App {
                 Ok(event) => {
                     event_buffer.push(event);
                     if last_render.elapsed() >= render_interval
-                        || event_buffer.len() >= App::MAX_EVENTS_IN_BUFFER
+                        || event_buffer.len() >= App::MAX_EVENTS_IN_RENDER_BUFFER
                     {
                         // Reset the timer
                         last_render = std::time::Instant::now();
