@@ -215,24 +215,25 @@ impl App {
             }
         });
 
-        // Listen for user input to cancel rendering
+        // Listen for user input
         loop {
-            match input_event_rx.try_recv() {
+            // Check if render is done, or canceled by render thread or input thread
+            if render_done.load(std::sync::atomic::Ordering::Relaxed)
+                || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                // Drop the receiver to signal input thread to exit
+                drop(input_event_rx);
+                break;
+            }
+
+            match input_event_rx.recv_timeout(Duration::from_millis(50)) {
                 Err(e) => {
                     match e {
-                        std::sync::mpsc::TryRecvError::Empty => {
-                            // No input, check if render is done
-                            if render_done.load(std::sync::atomic::Ordering::Relaxed) {
-                                // Render is done, break the loop
-                                drop(input_event_rx);
-                                break;
-                            }
-                            // Sleep a bit before trying again to avoid busy polling from
-                            // input_event_rx (avg typing speed is much slower than this)
-                            std::thread::sleep(Duration::from_millis(50));
+                        std::sync::mpsc::RecvTimeoutError::Timeout => {
+                            // Skip to next iteration to check render_done again
                             continue;
                         }
-                        std::sync::mpsc::TryRecvError::Disconnected => {
+                        std::sync::mpsc::RecvTimeoutError::Disconnected => {
                             // Input thread has exited, break the loop
                             break;
                         }
