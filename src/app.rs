@@ -32,9 +32,13 @@ enum InputEvent {
 
 pub struct App {
     /// Interval at which to render the event buffer
-    pub render_interval: Duration,
+    render_interval: Duration,
     /// Time taken to render each grid update when grid size is u8::MAX
     render_refresh_rate: Duration,
+    /// Timeout for receiving input events, a.k.a. how often to check for render done/cancel flags
+    input_recv_timeout: Duration,
+    /// Timeout for polling input events in the input thread, a.k.a. how often to check for render done/cancel flags
+    input_event_poll_timeout: Duration,
 }
 
 impl Default for App {
@@ -42,6 +46,8 @@ impl Default for App {
         Self {
             render_interval: Duration::from_millis(100),
             render_refresh_rate: Duration::from_micros(20),
+            input_recv_timeout: Duration::from_millis(100),
+            input_event_poll_timeout: Duration::from_millis(100),
         }
     }
 }
@@ -180,6 +186,7 @@ impl App {
         let cancel_signal = (Arc::new(Mutex::new(false)), Arc::new(Condvar::new()));
 
         let (input_event_tx, input_event_rx) = std::sync::mpsc::channel::<InputEvent>();
+        let input_event_poll_timeout = self.input_event_poll_timeout;
         let render_done_for_input = render_done.clone();
         let render_cancel_for_input = render_cancel.clone();
         let cancel_signal_for_input = cancel_signal.clone();
@@ -187,6 +194,7 @@ impl App {
         let input_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
             App::listen_to_user_input(
                 input_event_tx,
+                input_event_poll_timeout,
                 &render_done_for_input,
                 &render_cancel_for_input,
                 (&cancel_signal_for_input.0, &cancel_signal_for_input.1),
@@ -229,46 +237,49 @@ impl App {
             }
         });
 
-        // Listen for user input
-        loop {
-            // Check if render is done, or canceled by input thread
-            if render_done.load(std::sync::atomic::Ordering::Relaxed)
-                || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
-            {
-                // Drop the receiver to signal input thread to exit
-                drop(input_event_rx);
-                break;
-            }
-
-            match input_event_rx.recv_timeout(Duration::from_millis(50)) {
-                Err(e) => {
-                    match e {
-                        std::sync::mpsc::RecvTimeoutError::Timeout => {
-                            // Skip to next iteration to check render_done again
-                            continue;
-                        }
-                        std::sync::mpsc::RecvTimeoutError::Disconnected => {
-                            // Input thread has exited, break the loop
-                            break;
-                        }
-                    }
+        // Main thread loop to listen for user input events
+        let app_loop = |input_recv_timeout: Duration| {
+            loop {
+                // Check if render is done, or canceled by input thread
+                if render_done.load(std::sync::atomic::Ordering::Relaxed)
+                    || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    // Drop the receiver to signal input thread to exit
+                    drop(input_event_rx);
+                    break;
                 }
-                Ok(event) => match event {
-                    InputEvent::KeyPress(key_event) => {
-                        if key_event.code == KeyCode::Esc {
-                            render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                            // Close the channel to signal input thread to exit (if not already)
-                            drop(input_event_rx);
-                            break;
+
+                match input_event_rx.recv_timeout(input_recv_timeout) {
+                    Err(e) => {
+                        match e {
+                            std::sync::mpsc::RecvTimeoutError::Timeout => {
+                                // Skip to next iteration to check render_done again
+                                continue;
+                            }
+                            std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                                // Input thread has exited, break the loop
+                                break;
+                            }
                         }
                     }
-                    InputEvent::Resize(_width, _height) => {
-                        // Ignore resize events for now
-                        // TODO: Send terminal resize events to the render thread
-                    }
-                },
+                    Ok(event) => match event {
+                        InputEvent::KeyPress(key_event) => {
+                            if key_event.code == KeyCode::Esc {
+                                render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                // Close the channel to signal input thread to exit (if not already)
+                                drop(input_event_rx);
+                                break;
+                            }
+                        }
+                        InputEvent::Resize(_width, _height) => {
+                            // Ignore resize events for now
+                            // TODO: Send terminal resize events to the render thread
+                        }
+                    },
+                }
             }
-        }
+        };
+        app_loop(self.input_recv_timeout);
 
         // Wait for input thread to finish
         let _ = input_thread_handle.join();
@@ -379,6 +390,7 @@ impl App {
     /// Listen for user input events (key presses and resize)
     fn listen_to_user_input(
         input_event_tx: Sender<InputEvent>,
+        event_poll_timeout: Duration,
         render_done: &AtomicBool,
         render_cancel: &AtomicBool,
         cancel_signal: (&Mutex<bool>, &Condvar),
@@ -392,7 +404,7 @@ impl App {
             }
 
             // Poll for events with a timeout
-            if !event::poll(Duration::from_millis(100))? {
+            if !event::poll(event_poll_timeout)? {
                 // No event available, continue loop to check render_done again
                 continue;
             }
