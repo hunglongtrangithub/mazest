@@ -15,14 +15,12 @@ use crossterm::{
     style::{self, Attribute, Color, Stylize},
     terminal::{self, ClearType},
 };
+use rand::Rng;
 
 use crate::{
     generators::{Generator, generate_maze},
-    maze, solvers,
-};
-use crate::{
-    maze::{cell::GridCell, grid::GridEvent},
-    solvers::Solver,
+    maze::{Maze, cell::GridCell, grid::GridEvent},
+    solvers::{Solver, solve_maze},
 };
 
 enum InputEvent {
@@ -53,8 +51,15 @@ impl Default for App {
 }
 
 impl App {
-    pub const MAX_EVENTS_IN_CHANNEL_BUFFER: usize = 1000;
-    pub const MAX_EVENTS_IN_RENDER_BUFFER: usize = 1000;
+    const MAX_EVENTS_IN_CHANNEL_BUFFER: usize = 1000;
+    const MAX_EVENTS_IN_RENDER_BUFFER: usize = 1000;
+    const GENERATORS: [Generator; 4] = [
+        Generator::RecurBacktrack,
+        Generator::Kruskal,
+        Generator::Prim,
+        Generator::RecurDiv,
+    ];
+    const SOLVERS: [Solver; 4] = [Solver::Dfs, Solver::Bfs, Solver::Dijkstra, Solver::AStar];
 
     /// Set a panic hook to restore terminal state on panic
     /// This ensures that the terminal is not left in raw mode or alternate screen on panic
@@ -118,15 +123,10 @@ impl App {
         }
 
         // Ask user for maze generation algorithm
-        let generator = match App::select_from_menu(
+        let mut generator = match App::select_from_menu(
             stdout,
             "Select maze generation algorithm (use arrow keys and Enter, or Esc to exit):",
-            &[
-                Generator::RecurBacktrack,
-                Generator::Kruskal,
-                Generator::Prim,
-                Generator::RecurDiv,
-            ],
+            &App::GENERATORS,
         )? {
             Some(generator) => {
                 stdout.execute(style::PrintStyledContent(
@@ -142,15 +142,10 @@ impl App {
         };
 
         // Ask user for maze solving algorithm
-        let solver = match App::select_from_menu(
+        let mut solver = match App::select_from_menu(
             stdout,
             "Select maze solving algorithm (use arrow keys and Enter, or Esc to exit):",
-            &[
-                solvers::Solver::Dfs,
-                solvers::Solver::Bfs,
-                solvers::Solver::Dijkstra,
-                solvers::Solver::AStar,
-            ],
+            &App::SOLVERS,
         )? {
             Some(solver) => {
                 stdout.execute(style::PrintStyledContent(
@@ -168,7 +163,7 @@ impl App {
         // Ask if user wants to loop generation and solving
         let loop_animation = match App::select_from_menu(
             stdout,
-            "Loop maze generation and solving? (use arrow keys and Enter, or Esc to exit):",
+            "Loop maze generation and solving? Will randomize generator & solver combination. (use arrow keys and Enter, or Esc to exit):",
             &["Yes", "No"],
         )? {
             Some(choice) => choice == "Yes",
@@ -209,7 +204,6 @@ impl App {
         let render_interval = self.render_interval;
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
-        let cancel_signal_for_render = cancel_signal.clone();
         let render_thread_handle = std::thread::spawn(move || {
             App::render(
                 render_interval,
@@ -217,16 +211,22 @@ impl App {
                 render_refresh_time,
                 &render_cancel_for_render,
                 &render_done_for_render,
-                (&cancel_signal_for_render.0, &cancel_signal_for_render.1),
+                (&cancel_signal.0, &cancel_signal.1),
             )
         });
 
         // Spawn a thread to generate maze and solve it
+        let combos = App::GENERATORS
+            .iter()
+            .flat_map(|&generator| App::SOLVERS.iter().map(move |&solver| (generator, solver)))
+            .collect::<Vec<(Generator, Solver)>>();
         let render_cancel_for_compute = render_cancel.clone();
         let compute_thread_handle = std::thread::spawn(move || -> bool {
             if !loop_animation {
                 return App::compute(width, height, grid_event_tx, generator, solver);
             }
+            // Looping mode: randomly select generator and solver each iteration
+            let mut rng = rand::rng();
             loop {
                 let goal_reached =
                     App::compute(width, height, grid_event_tx.clone(), generator, solver);
@@ -234,6 +234,8 @@ impl App {
                 if render_cancel_for_compute.load(std::sync::atomic::Ordering::Relaxed) {
                     return goal_reached;
                 }
+                // Randomly select new generator and solver combination for next iteration
+                (generator, solver) = combos[rng.random_range(0..combos.len())];
             }
         });
 
@@ -317,8 +319,7 @@ impl App {
         Ok(())
     }
 
-    /// Profiling mode: automatically determine maze dimensions based on terminal size
-    /// and run the maze generation and solving without user input
+    /// Profiling mode: run animations in the background without rendering to terminal
     pub fn profile(
         &self,
         width: u8,
@@ -460,14 +461,14 @@ impl App {
         height: u8,
         grid_event_tx: std::sync::mpsc::SyncSender<GridEvent>,
         generator: Generator,
-        solver: solvers::Solver,
+        solver: Solver,
     ) -> bool {
-        let mut maze = maze::Maze::new(width, height, Some(grid_event_tx));
+        let mut maze = Maze::new(width, height, Some(grid_event_tx));
         // Generate the maze using the selected algorithm
         generate_maze(&mut maze, generator, None);
 
         // Solve the maze using the selected algorithm
-        solvers::solve_maze(&mut maze, solver)
+        solve_maze(&mut maze, solver)
         // Maze is dropped here, as well as the grid_event_tx sender
     }
 
