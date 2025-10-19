@@ -176,9 +176,14 @@ impl App {
 
         let (input_event_tx, input_event_rx) = std::sync::mpsc::channel::<InputEvent>();
         let render_done_for_input = render_done.clone();
+        let render_cnancel_for_input = render_cancel.clone();
         // Spawn a thread to listen for user input
         let input_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
-            App::listen_to_user_input(input_event_tx, &render_done_for_input)
+            App::listen_to_user_input(
+                input_event_tx,
+                &render_done_for_input,
+                &render_cnancel_for_input,
+            )
         });
 
         let (grid_event_tx, grid_event_rx) =
@@ -363,14 +368,16 @@ impl App {
     }
 
     /// Listen for user input events (key presses and resize)
-    /// Returns the thread handle and the receiver for input events
     fn listen_to_user_input(
         input_event_tx: Sender<InputEvent>,
         render_done: &AtomicBool,
+        render_cancel: &AtomicBool,
     ) -> std::io::Result<()> {
         loop {
-            // Check if render is done
-            if render_done.load(std::sync::atomic::Ordering::Relaxed) {
+            // Check if render is done or canceled
+            if render_done.load(std::sync::atomic::Ordering::Relaxed)
+                || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 return Ok(());
             }
 
