@@ -1,7 +1,7 @@
 use std::{
     io::{Stdout, Write},
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::AtomicBool,
         mpsc::{Receiver, Sender},
     },
@@ -175,16 +175,21 @@ impl App {
         let render_done = Arc::new(AtomicBool::new(false));
         // Flag to indicate rendering should be cancelled. Set to true by the input thread on Esc key.
         let render_cancel = Arc::new(AtomicBool::new(false));
+        // Cancellation signal (mutex + condvar) for render thread to wait on from input thread
+        // when terminal resize is insufficient
+        let cancel_signal = (Arc::new(Mutex::new(false)), Arc::new(Condvar::new()));
 
         let (input_event_tx, input_event_rx) = std::sync::mpsc::channel::<InputEvent>();
         let render_done_for_input = render_done.clone();
-        let render_cnancel_for_input = render_cancel.clone();
+        let render_cancel_for_input = render_cancel.clone();
+        let cancel_signal_for_input = cancel_signal.clone();
         // Spawn a thread to listen for user input
         let input_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
             App::listen_to_user_input(
                 input_event_tx,
                 &render_done_for_input,
-                &render_cnancel_for_input,
+                &render_cancel_for_input,
+                (&cancel_signal_for_input.0, &cancel_signal_for_input.1),
             )
         });
 
@@ -196,6 +201,7 @@ impl App {
         let render_interval = self.render_interval;
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
+        let cancel_signal_for_render = cancel_signal.clone();
         let render_thread_handle = std::thread::spawn(move || {
             App::render(
                 render_interval,
@@ -203,6 +209,7 @@ impl App {
                 render_refresh_time,
                 &render_cancel_for_render,
                 &render_done_for_render,
+                (&cancel_signal_for_render.0, &cancel_signal_for_render.1),
             )
         });
 
@@ -224,7 +231,7 @@ impl App {
 
         // Listen for user input
         loop {
-            // Check if render is done, or canceled by render thread or input thread
+            // Check if render is done, or canceled by input thread
             if render_done.load(std::sync::atomic::Ordering::Relaxed)
                 || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
             {
@@ -374,6 +381,7 @@ impl App {
         input_event_tx: Sender<InputEvent>,
         render_done: &AtomicBool,
         render_cancel: &AtomicBool,
+        cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<()> {
         loop {
             // Check if render is done or canceled
@@ -398,6 +406,7 @@ impl App {
                 event::Event::Resize(width, height) => InputEvent::Resize(width, height),
                 _ => continue,
             };
+
             // Should exit input thread on Esc key
             let should_exit = matches!(
                 input_event,
@@ -406,11 +415,27 @@ impl App {
                     ..
                 })
             );
+
+            // Send the input event to the main thread
             if input_event_tx.send(input_event).is_err() {
                 // Receiver has been dropped, exit the thread
                 return Ok(());
             }
+
             if should_exit {
+                // Set cancel flag
+                render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+
+                let (cancel_mutex, cancel_condvar) = cancel_signal;
+                // Signal cancellation and exit the thread
+                {
+                    let mut cancelled = match cancel_mutex.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => return Ok(()), // Mutex poisoned, exit thread
+                    };
+                    *cancelled = true;
+                    cancel_condvar.notify_all();
+                }
                 return Ok(());
             }
         }
@@ -692,7 +717,12 @@ impl App {
     /// If not, display a message and wait for user to press Esc, then return Ok(false)
     /// Returns Ok(true) if terminal size is sufficient
     /// Returns Err if there was an I/O error
-    fn check_resize(stdout: &mut Stdout, width: u16, height: u16) -> std::io::Result<bool> {
+    fn check_resize(
+        stdout: &mut Stdout,
+        width: u16,
+        height: u16,
+        cancel_signal: (&Mutex<bool>, &Condvar),
+    ) -> std::io::Result<bool> {
         let (term_width, term_height) = terminal::size()?;
         if term_width < width * GridCell::CELL_WIDTH || term_height < height {
             let msg = format!(
@@ -714,7 +744,21 @@ impl App {
                 )
             )?;
             stdout.flush()?;
-            App::wait_for_esc()?;
+
+            {
+                let (cancel_mutex, cancel_condvar) = cancel_signal;
+                // Wait for cancellation signal from input thread
+                let mut canceled_guard = match cancel_mutex.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return Ok(false), // Mutex poisoned, treat as cancelled
+                };
+                while !*canceled_guard {
+                    canceled_guard = match cancel_condvar.wait(canceled_guard) {
+                        Ok(guard) => guard,
+                        Err(_) => return Ok(false), // Mutex poisoned, treat as cancelled
+                    };
+                }
+            }
             return Ok(false);
         }
         Ok(true)
@@ -730,6 +774,7 @@ impl App {
         grid_dims: &mut Option<(u16, u16)>,
         render_refresh_time: Duration,
         cancel: &AtomicBool,
+        cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<bool> {
         for event in event_buffer.drain(..) {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -743,7 +788,7 @@ impl App {
                     height,
                 } => {
                     *grid_dims = Some((width, height));
-                    if !App::check_resize(stdout, width, height)? {
+                    if !App::check_resize(stdout, width, height, cancel_signal)? {
                         cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                         return Ok(false);
                     }
@@ -767,7 +812,7 @@ impl App {
                     new,
                 } => match grid_dims {
                     Some((width, height)) => {
-                        if !App::check_resize(stdout, *width, *height)? {
+                        if !App::check_resize(stdout, *width, *height, cancel_signal)? {
                             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                             return Ok(false);
                         }
@@ -800,6 +845,7 @@ impl App {
         render_refresh_time: Duration,
         cancel: &AtomicBool,
         done: &AtomicBool,
+        cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<bool> {
         let mut stdout = std::io::stdout();
         let mut event_buffer = Vec::new();
@@ -820,6 +866,7 @@ impl App {
                         &mut grid_dims,
                         render_refresh_time,
                         cancel,
+                        cancel_signal,
                     )? {
                         // Cancelled
                         return Ok(false);
@@ -841,6 +888,7 @@ impl App {
                             &mut grid_dims,
                             render_refresh_time,
                             cancel,
+                            cancel_signal,
                         )? {
                             // Cancelled
                             return Ok(false);
