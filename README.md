@@ -2,9 +2,14 @@
 
 A high-performance, responsive, concurrent maze generation and solving visualizer for the terminal, built with Rust.
 
+## Demo
+
+[![asciicast](https://asciinema.org/a/37n2GR48FxXtdM3w4afXky4Ku.svg)](https://asciinema.org/a/37n2GR48FxXtdM3w4afXky4Ku)
+
 ## Features
 
 ### Core Functionality
+
 - **Real-time visualization** of maze generation and pathfinding algorithms
 - **Concurrent architecture** with separate compute and render threads for smooth performance
 - **Event-driven design** with responsive cancellation and cleanup
@@ -13,16 +18,18 @@ A high-performance, responsive, concurrent maze generation and solving visualize
 ### Implemented Algorithms
 
 **Maze Generators:**
+
 - Recursive Backtracking (DFS-based)
 - Randomized Prim's Algorithm
 - Randomized Kruskal's Algorithm
 - Recursive Division
 
 **Pathfinding Solvers:**
+
 - Depth-First Search (DFS)
 - Breadth-First Search (BFS)
 - Dijkstra's Algorithm
-- A* (A-Star) Search
+- A\* (A-Star) Search
 
 ### Current Controls
 
@@ -62,6 +69,7 @@ cargo run
 ## Upcoming Features
 
 ### Interactive Controls (Planned)
+
 - **Pause/Resume** - Spacebar to pause/resume rendering
 - **Navigation** - Left/Right arrow keys to traverse rendering history
 - **Speed Control** - Up/Down arrow keys to adjust rendering speed with on-screen indicator
@@ -75,10 +83,12 @@ Apart from user experience reason, the reason I want to have the speed control f
 - **macOS Terminal.app** & **Iterm** - Significant lag at max sizes
 
 ### Terminal Resize Handling (Planned)
+
 - Resume from last valid state when terminal size is restored
 - Maybe start a new run when terminal size is too small for current maze size?
 
 ### Future Enhancements
+
 - Additional maze generation algorithms
 - More pathfinding algorithms
 - Support for larger maze sizes (u16 dimensions: up to 65,535×65,535)?
