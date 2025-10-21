@@ -51,7 +51,8 @@ cargo run
 
 ### Architecture
 
-- **Event-driven design** with `crossterm` for terminal I/O
+- **Event-driven design**
+- Only uses `crossterm` for terminal I/O
 - **Multi-threaded execution:**
   - Main thread: handles user input events and orchestration
   - Compute thread: runs maze generation and solving algorithms
