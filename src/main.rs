@@ -4,6 +4,7 @@ fn main() -> std::io::Result<()> {
     // Initialize tracing subscriber for logging
     let (non_blocking, _guard) = tracing_appender::non_blocking(std::io::stderr());
     tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
         .with_writer(non_blocking)
         .with_line_number(true)
         .init();
