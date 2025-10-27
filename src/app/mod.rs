@@ -1,12 +1,9 @@
 mod history;
+mod renderer;
 
 use std::{
     io::{Stdout, Write},
-    sync::{
-        Arc, Condvar, Mutex,
-        atomic::AtomicBool,
-        mpsc::{Receiver, Sender},
-    },
+    sync::{Arc, Condvar, Mutex, atomic::AtomicBool, mpsc::Sender},
     time::Duration,
 };
 
@@ -20,7 +17,7 @@ use crossterm::{
 use rand::Rng;
 
 use crate::{
-    app::history::GridEventHistory,
+    app::renderer::Renderer,
     generators::{Generator, generate_maze},
     maze::{Maze, cell::GridCell, grid::GridEvent},
     solvers::{Solver, solve_maze},
@@ -217,11 +214,11 @@ impl App {
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
         let render_thread_handle = std::thread::spawn(move || {
-            App::render(
+            let mut renderer = Renderer::new(max_history_grid_events);
+            renderer.render(
                 grid_event_rx,
                 user_action_event_rx,
                 render_refresh_time,
-                max_history_grid_events,
                 &render_cancel_for_render,
                 &render_done_for_render,
                 (&cancel_signal.0, &cancel_signal.1),
@@ -775,207 +772,5 @@ Maximum acceptable values are based on current terminal size.\r\n"
     fn calculate_render_refresh_time(&self, grid_width: u8, grid_height: u8) -> Duration {
         let size = grid_width.max(grid_height) as usize;
         self.render_refresh_rate * (u8::MAX as u32 / size as u32).pow(2)
-    }
-
-    /// Check if terminal size is sufficient for the given grid dimensions
-    /// If not, display a message and wait for user to press Esc, then return Ok(false)
-    /// Returns Ok(true) if terminal size is sufficient
-    /// Returns Err if there was an I/O error
-    fn check_resize(
-        stdout: &mut Stdout,
-        width: u16,
-        height: u16,
-        cancel_signal: (&Mutex<bool>, &Condvar),
-    ) -> std::io::Result<bool> {
-        let (term_width, term_height) = terminal::size()?;
-        if term_width < width * GridCell::CELL_WIDTH || term_height < height {
-            let msg = format!(
-                "Terminal size is too small ({}x{}) for the grid dimensions ({}x{}) to display. Please resize the terminal.\r\n",
-                width * GridCell::CELL_WIDTH,
-                height,
-                width,
-                height
-            );
-            queue!(
-                stdout,
-                terminal::Clear(ClearType::All),
-                cursor::MoveTo(0, 0),
-                style::PrintStyledContent(msg.with(Color::Yellow).attribute(Attribute::Bold)),
-                style::PrintStyledContent(
-                    "Press Esc to exit...\r\n"
-                        .with(Color::Blue)
-                        .attribute(Attribute::Bold)
-                )
-            )?;
-            stdout.flush()?;
-
-            {
-                let (cancel_mutex, cancel_condvar) = cancel_signal;
-                // Wait for cancellation signal from input thread
-                let mut canceled_guard = match cancel_mutex.lock() {
-                    Ok(guard) => guard,
-                    Err(_) => return Ok(false), // Mutex poisoned, treat as cancelled
-                };
-                while !*canceled_guard {
-                    canceled_guard = match cancel_condvar.wait(canceled_guard) {
-                        Ok(guard) => guard,
-                        Err(_) => return Ok(false), // Mutex poisoned, treat as cancelled
-                    };
-                }
-            }
-            return Ok(false);
-        }
-        Ok(true)
-    }
-
-    /// Render loop that processes events from the receiver and renders them at specified intervals
-    /// Returns Ok(true) if rendering completed successfully
-    /// Returns Ok(false) if rendering was cancelled
-    /// Returns Err if there was an I/O error
-    fn render(
-        grid_event_rx: Receiver<GridEvent>,
-        user_action_event_rx: Receiver<UserActionEvent>,
-        render_refresh_time: Duration,
-        max_history_grid_events: usize,
-        cancel: &AtomicBool,
-        done: &AtomicBool,
-        cancel_signal: (&Mutex<bool>, &Condvar),
-    ) -> std::io::Result<bool> {
-        let mut stdout = std::io::stdout();
-        let mut grid_dims: Option<(u16, u16)> = None;
-        let mut history = GridEventHistory::new(max_history_grid_events);
-
-        queue!(stdout, terminal::Clear(ClearType::All), cursor::Hide)?;
-        stdout.flush()?;
-
-        loop {
-            // Try to receive user action events without blocking
-            match user_action_event_rx.try_recv() {
-                Ok(action_event) => {
-                    tracing::debug!("Received user action event: {:?}", action_event);
-                    if let UserActionEvent::Pause = action_event {
-                        // Pause rendering until Resume event is received
-                        loop {
-                            match user_action_event_rx.recv() {
-                                Err(_e) => {
-                                    // Channel disconnected, ignore and continue
-                                    break;
-                                }
-                                Ok(event) => {
-                                    match event {
-                                        UserActionEvent::Resume => {
-                                            // Resume rendering
-                                            break;
-                                        }
-                                        UserActionEvent::Pause => {
-                                            // Already paused, ignore
-                                        }
-                                        UserActionEvent::Forward => {
-                                            // Browse forward in history
-                                            if let Some(event) = history.history_forward() {
-                                                tracing::debug!(
-                                                    "Rendering history forward event: {:?}",
-                                                    event
-                                                );
-                                            }
-                                        }
-                                        UserActionEvent::Backward => {
-                                            // Browse backward in history
-                                            if let Some(event) = history.history_backward() {
-                                                tracing::debug!(
-                                                    "Rendering history backward event: {:?}",
-                                                    event
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // No action event, continue
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // Channel disconnected, ignore and continue
-                }
-            }
-            // Block and wait for the next event
-            match grid_event_rx.recv() {
-                Err(_e) => {
-                    // Channel disconnected, exit the thread
-                    break;
-                }
-                Ok(event) => {
-                    // Render the event
-                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        return Ok(false);
-                    }
-
-                    match event {
-                        GridEvent::Initial {
-                            cell,
-                            width,
-                            height,
-                        } => {
-                            grid_dims = Some((width, height));
-                            if !App::check_resize(&mut stdout, width, height, cancel_signal)? {
-                                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                return Ok(false);
-                            }
-
-                            // Clear screen
-                            // Move to top-left corner
-                            // Print the whole grid with the specified cell
-
-                            stdout.queue(cursor::MoveTo(0, 0))?;
-                            for _y in 0..height {
-                                for _x in 0..width {
-                                    stdout.queue(style::Print(cell))?;
-                                }
-                                stdout.queue(style::Print("\r\n"))?;
-                            }
-                            stdout.flush()?;
-                        }
-                        GridEvent::Update {
-                            coord,
-                            old: _old,
-                            new,
-                        } => match grid_dims {
-                            Some((width, height)) => {
-                                if !App::check_resize(&mut stdout, width, height, cancel_signal)? {
-                                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    return Ok(false);
-                                }
-                                // Move the cursor to the specified coordinate and print the
-                                // new cell using the grid dimensions
-                                queue!(
-                                    stdout,
-                                    cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
-                                    style::Print(new)
-                                )?;
-                                stdout.flush()?;
-                            }
-                            // Skip if width and height are not set
-                            None => {}
-                        },
-                    }
-
-                    // Add event to history
-                    history.add_event(event);
-
-                    // Sleep a bit to simulate rendering time
-                    std::thread::sleep(render_refresh_time);
-                }
-            }
-        }
-        // Move cursor below the maze after exiting
-        if let Some((_, height)) = grid_dims {
-            queue!(stdout, cursor::MoveTo(0, height), cursor::Show,)?;
-            stdout.flush()?;
-        }
-        done.store(true, std::sync::atomic::Ordering::Relaxed);
-        Ok(true)
     }
 }
