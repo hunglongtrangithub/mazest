@@ -1,3 +1,5 @@
+mod history;
+
 use std::{
     io::{Stdout, Write},
     sync::{
@@ -18,6 +20,7 @@ use crossterm::{
 use rand::Rng;
 
 use crate::{
+    app::history::GridEventHistory,
     generators::{Generator, generate_maze},
     maze::{Maze, cell::GridCell, grid::GridEvent},
     solvers::{Solver, solve_maze},
@@ -42,6 +45,8 @@ pub struct App {
     input_recv_timeout: Duration,
     /// Timeout for polling input events in the input thread, a.k.a. how often to check for render done/cancel flags
     user_input_event_poll_timeout: Duration,
+    /// maximum number of grid events to keep for history browsing when paused
+    max_history_grid_events: usize,
 }
 
 impl Default for App {
@@ -50,6 +55,7 @@ impl Default for App {
             render_refresh_rate: Duration::from_micros(20),
             input_recv_timeout: Duration::from_millis(100),
             user_input_event_poll_timeout: Duration::from_millis(100),
+            max_history_grid_events: 1000,
         }
     }
 }
@@ -207,6 +213,7 @@ impl App {
 
         // Spawn a thread to listen for grid updates and render the maze
         let render_refresh_time = self.calculate_render_refresh_time(width, height);
+        let max_history_grid_events = self.max_history_grid_events;
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
         let render_thread_handle = std::thread::spawn(move || {
@@ -214,6 +221,7 @@ impl App {
                 grid_event_rx,
                 user_action_event_rx,
                 render_refresh_time,
+                max_history_grid_events,
                 &render_cancel_for_render,
                 &render_done_for_render,
                 (&cancel_signal.0, &cancel_signal.1),
@@ -828,12 +836,14 @@ Maximum acceptable values are based on current terminal size.\r\n"
         grid_event_rx: Receiver<GridEvent>,
         user_action_event_rx: Receiver<UserActionEvent>,
         render_refresh_time: Duration,
+        max_history_grid_events: usize,
         cancel: &AtomicBool,
         done: &AtomicBool,
         cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<bool> {
         let mut stdout = std::io::stdout();
         let mut grid_dims: Option<(u16, u16)> = None;
+        let mut history = GridEventHistory::new(max_history_grid_events);
 
         queue!(stdout, terminal::Clear(ClearType::All), cursor::Hide)?;
         stdout.flush()?;
@@ -861,10 +871,22 @@ Maximum acceptable values are based on current terminal size.\r\n"
                                             // Already paused, ignore
                                         }
                                         UserActionEvent::Forward => {
-                                            // Ignore for now
+                                            // Browse forward in history
+                                            if let Some(event) = history.history_forward() {
+                                                tracing::debug!(
+                                                    "Rendering history forward event: {:?}",
+                                                    event
+                                                );
+                                            }
                                         }
                                         UserActionEvent::Backward => {
-                                            // Ignore for now
+                                            // Browse backward in history
+                                            if let Some(event) = history.history_backward() {
+                                                tracing::debug!(
+                                                    "Rendering history backward event: {:?}",
+                                                    event
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -939,6 +961,10 @@ Maximum acceptable values are based on current terminal size.\r\n"
                             None => {}
                         },
                     }
+
+                    // Add event to history
+                    history.add_event(event);
+
                     // Sleep a bit to simulate rendering time
                     std::thread::sleep(render_refresh_time);
                 }
