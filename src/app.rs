@@ -23,9 +23,16 @@ use crate::{
     solvers::{Solver, solve_maze},
 };
 
-enum InputEvent {
+enum UserInputEvent {
     KeyPress(event::KeyEvent),
-    Resize(u16, u16),
+}
+
+#[derive(Debug)]
+enum UserActionEvent {
+    Pause,
+    Resume,
+    Forward,
+    Backward,
 }
 
 pub struct App {
@@ -36,7 +43,7 @@ pub struct App {
     /// Timeout for receiving input events, a.k.a. how often to check for render done/cancel flags
     input_recv_timeout: Duration,
     /// Timeout for polling input events in the input thread, a.k.a. how often to check for render done/cancel flags
-    input_event_poll_timeout: Duration,
+    user_input_event_poll_timeout: Duration,
 }
 
 impl Default for App {
@@ -45,7 +52,7 @@ impl Default for App {
             render_interval: Duration::from_millis(100),
             render_refresh_rate: Duration::from_micros(20),
             input_recv_timeout: Duration::from_millis(100),
-            input_event_poll_timeout: Duration::from_millis(100),
+            user_input_event_poll_timeout: Duration::from_millis(100),
         }
     }
 }
@@ -180,16 +187,17 @@ impl App {
         // when terminal resize is insufficient
         let cancel_signal = (Arc::new(Mutex::new(false)), Arc::new(Condvar::new()));
 
-        let (input_event_tx, input_event_rx) = std::sync::mpsc::channel::<InputEvent>();
-        let input_event_poll_timeout = self.input_event_poll_timeout;
+        let (user_input_event_tx, user_input_event_rx) =
+            std::sync::mpsc::channel::<UserInputEvent>();
+        let user_input_event_poll_timeout = self.user_input_event_poll_timeout;
         let render_done_for_input = render_done.clone();
         let render_cancel_for_input = render_cancel.clone();
         let cancel_signal_for_input = cancel_signal.clone();
         // Spawn a thread to listen for user input
         let input_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
             App::listen_to_user_input(
-                input_event_tx,
-                input_event_poll_timeout,
+                user_input_event_tx,
+                user_input_event_poll_timeout,
                 &render_done_for_input,
                 &render_cancel_for_input,
                 (&cancel_signal_for_input.0, &cancel_signal_for_input.1),
@@ -198,6 +206,8 @@ impl App {
 
         let (grid_event_tx, grid_event_rx) =
             std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_CHANNEL_BUFFER);
+        let (user_action_event_tx, user_action_event_rx) =
+            std::sync::mpsc::channel::<UserActionEvent>();
 
         // Spawn a thread to listen for grid updates and render the maze
         let render_refresh_time = self.calculate_render_refresh_time(width, height);
@@ -208,6 +218,7 @@ impl App {
             App::render(
                 render_interval,
                 grid_event_rx,
+                user_action_event_rx,
                 render_refresh_time,
                 &render_cancel_for_render,
                 &render_done_for_render,
@@ -239,19 +250,22 @@ impl App {
             }
         });
 
-        // Main thread loop to listen for user input events
+        // Main thread loop to listen for user input events during rendering
         let app_loop = |input_recv_timeout: Duration| {
+            tracing::info!("Started main app loop");
+            // Flag to indicate if the animation is currently paused
+            let mut is_paused = false;
             loop {
                 // Check if render is done, or canceled by input thread
                 if render_done.load(std::sync::atomic::Ordering::Relaxed)
                     || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
                 {
                     // Drop the receiver to signal input thread to exit
-                    drop(input_event_rx);
+                    drop(user_input_event_rx);
                     break;
                 }
 
-                match input_event_rx.recv_timeout(input_recv_timeout) {
+                match user_input_event_rx.recv_timeout(input_recv_timeout) {
                     Err(e) => {
                         match e {
                             std::sync::mpsc::RecvTimeoutError::Timeout => {
@@ -265,17 +279,53 @@ impl App {
                         }
                     }
                     Ok(event) => match event {
-                        InputEvent::KeyPress(key_event) => {
-                            if key_event.code == KeyCode::Esc {
-                                render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                // Close the channel to signal input thread to exit (if not already)
-                                drop(input_event_rx);
-                                break;
+                        UserInputEvent::KeyPress(key_event) => {
+                            match key_event.code {
+                                // Exit on Esc key
+                                KeyCode::Esc => {
+                                    tracing::info!("Esc key pressed, cancelling render");
+                                    render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    // Close the channels to signal input thread and render thread to exit (if not already)
+                                    drop(user_input_event_rx);
+                                    drop(user_action_event_tx);
+                                    break;
+                                }
+                                KeyCode::Enter => {
+                                    // Toggle pause/resume on Enter key
+                                    let event = if is_paused {
+                                        UserActionEvent::Resume
+                                    } else {
+                                        UserActionEvent::Pause
+                                    };
+                                    tracing::info!("Sending user action event: {:?}", event);
+                                    if user_action_event_tx.send(event).is_ok() {
+                                        // Toggle pause state
+                                        is_paused = !is_paused;
+                                    } else {
+                                        // Receiver has been dropped, exit the loop
+                                        break;
+                                    }
+                                }
+                                KeyCode::Left if is_paused => {
+                                    // Step backward when paused
+                                    if user_action_event_tx
+                                        .send(UserActionEvent::Backward)
+                                        .is_err()
+                                    {
+                                        // Receiver has been dropped, exit the loop
+                                        break;
+                                    }
+                                }
+                                KeyCode::Right if is_paused => {
+                                    // Step forward when paused
+                                    if user_action_event_tx.send(UserActionEvent::Forward).is_err()
+                                    {
+                                        // Receiver has been dropped, exit the loop
+                                        break;
+                                    }
+                                }
+                                _ => {}
                             }
-                        }
-                        InputEvent::Resize(_width, _height) => {
-                            // Ignore resize events for now
-                            // TODO: Send terminal resize events to the render thread
                         }
                     },
                 }
@@ -390,7 +440,7 @@ impl App {
 
     /// Listen for user input events (key presses and resize)
     fn listen_to_user_input(
-        input_event_tx: Sender<InputEvent>,
+        user_input_event_tx: Sender<UserInputEvent>,
         event_poll_timeout: Duration,
         render_done: &AtomicBool,
         render_cancel: &AtomicBool,
@@ -411,26 +461,25 @@ impl App {
             }
 
             // Read the next event
-            // We only care about key presses and resize events
+            // We only care about key presses events for now
             let input_event = match event::read()? {
                 event::Event::Key(key_event) if key_event.kind == event::KeyEventKind::Press => {
-                    InputEvent::KeyPress(key_event)
+                    UserInputEvent::KeyPress(key_event)
                 }
-                event::Event::Resize(width, height) => InputEvent::Resize(width, height),
                 _ => continue,
             };
 
             // Should exit input thread on Esc key
             let should_exit = matches!(
                 input_event,
-                InputEvent::KeyPress(event::KeyEvent {
+                UserInputEvent::KeyPress(event::KeyEvent {
                     code: KeyCode::Esc,
                     ..
                 })
             );
 
             // Send the input event to the main thread
-            if input_event_tx.send(input_event).is_err() {
+            if user_input_event_tx.send(input_event).is_err() {
                 // Receiver has been dropped, exit the thread
                 return Ok(());
             }
@@ -581,7 +630,7 @@ impl App {
     /// Ensures the size is odd and at least 3
     fn get_default_maze_size(term_size: u16, cell_size: u16) -> u8 {
         // Get default grid dimension based on terminal size. Make sure they are odd and at least 3.
-        let odd_and_min_3 = |n: u16| if n % 2 == 0 { n - 1 } else { n }.max(3);
+        let odd_and_min_3 = |n: u16| if n % 2 == 0 && n > 0 { n - 1 } else { n }.max(3);
         let default_grid_size = odd_and_min_3(term_size / cell_size);
 
         // Default maze dimensions are half the grid dimensions, capped at u8::MAX
@@ -615,14 +664,15 @@ Maximum acceptable values are based on current terminal size.\r\n"
                 return Ok(default_size);
             }
 
+            let error_msg = format!(
+                "Please enter a valid number between 1 and {}.",
+                default_size
+            );
             s.parse::<u8>()
-                .map_err(|_| "Please enter a valid number".to_string())
+                .map_err(|_| error_msg.clone())
                 .and_then(|n| match n {
                     1..=255 if n <= default_size => Ok(n),
-                    _ => Err(format!(
-                        "Please enter a valid number between 1 and {}.",
-                        default_size
-                    )),
+                    _ => Err(error_msg),
                 })
         };
 
@@ -696,6 +746,10 @@ Maximum acceptable values are based on current terminal size.\r\n"
 
             // Wait for key event
             if let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? {
+                if kind != event::KeyEventKind::Press {
+                    // Only handle key press events
+                    continue;
+                }
                 match code {
                     KeyCode::Up => {
                         selected = match selected {
@@ -703,7 +757,7 @@ Maximum acceptable values are based on current terminal size.\r\n"
                             _ => selected - 1,
                         };
                     }
-                    KeyCode::Down if kind == event::KeyEventKind::Press => {
+                    KeyCode::Down => {
                         selected = if selected >= options.len() - 1 {
                             0
                         } else {
@@ -866,7 +920,8 @@ Maximum acceptable values are based on current terminal size.\r\n"
     /// Returns Err if there was an I/O error
     fn render(
         render_interval: Duration,
-        receiver: Receiver<GridEvent>,
+        grid_event_rx: Receiver<GridEvent>,
+        user_action_event_rx: Receiver<UserActionEvent>,
         render_refresh_time: Duration,
         cancel: &AtomicBool,
         done: &AtomicBool,
@@ -881,8 +936,48 @@ Maximum acceptable values are based on current terminal size.\r\n"
         stdout.flush()?;
 
         loop {
+            // Try to receive user action events without blocking
+            match user_action_event_rx.try_recv() {
+                Ok(action_event) => {
+                    tracing::info!("Received user action event: {:?}", action_event);
+                    if let UserActionEvent::Pause = action_event {
+                        // Pause rendering until Resume event is received
+                        loop {
+                            match user_action_event_rx.recv() {
+                                Err(_e) => {
+                                    // Channel disconnected, ignore and continue
+                                    break;
+                                }
+                                Ok(event) => {
+                                    match event {
+                                        UserActionEvent::Resume => {
+                                            // Resume rendering
+                                            break;
+                                        }
+                                        UserActionEvent::Pause => {
+                                            // Already paused, ignore
+                                        }
+                                        UserActionEvent::Forward => {
+                                            // Ignore for now
+                                        }
+                                        UserActionEvent::Backward => {
+                                            // Ignore for now
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // No action event, continue
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Channel disconnected, ignore and continue
+                }
+            }
             // Block and wait for the next event
-            match receiver.recv() {
+            match grid_event_rx.recv() {
                 Err(_e) => {
                     // Channel disconnected, render the remaining buffer and exit
                     if !App::process_events(
