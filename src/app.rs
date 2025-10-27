@@ -577,45 +577,57 @@ impl App {
         Ok(number_option)
     }
 
+    /// Calculate default maze size based on terminal size and cell size
+    /// Ensures the size is odd and at least 3
+    fn get_default_maze_size(term_size: u16, cell_size: u16) -> u8 {
+        // Get default grid dimension based on terminal size. Make sure they are odd and at least 3.
+        let odd_and_min_3 = |n: u16| if n % 2 == 0 { n - 1 } else { n }.max(3);
+        let default_grid_size = odd_and_min_3(term_size / cell_size);
+
+        // Default maze dimensions are half the grid dimensions, capped at u8::MAX
+        (default_grid_size / 2).min(u8::MAX as u16) as u8
+    }
+
     /// Ask user for maze dimensions (width and height between 1 and 255)
     /// Returns None if user cancels input with Esc
     /// Returns Some((width, height)) if user inputs valid dimensions
     fn ask_maze_dimensions(stdout: &mut Stdout) -> std::io::Result<Option<(u8, u8)>> {
         stdout.execute(style::PrintStyledContent(
-            "Enter maze dimensions (width and height between 1 and 255), or press Esc to exit. Default values are based on terminal size.\r\n"
+            "Enter maze dimensions (width and height between 1 and 255), or press Esc to exit. \
+Maximum acceptable values are based on current terminal size.\r\n"
                 .with(Color::Blue),
         ))?;
 
-        let validate = |s: &str, default_size: u8| {
+        // Validation closure based on default sizes
+        let validate = |s: &str, is_width| {
+            let default_size = if let Ok((term_width, term_height)) = terminal::size() {
+                if is_width {
+                    App::get_default_maze_size(term_width, GridCell::CELL_WIDTH)
+                } else {
+                    App::get_default_maze_size(term_height, 1)
+                }
+            } else {
+                // Fallback to max size if terminal size cannot be determined
+                u8::MAX
+            };
+
             if s.trim().is_empty() {
                 return Ok(default_size);
             }
+
             s.parse::<u8>()
-                .map_err(|_| "Please enter a number between 1 and 255".to_string())
+                .map_err(|_| "Please enter a valid number".to_string())
                 .and_then(|n| match n {
-                    1..=255 => Ok(n),
-                    _ => Err("Number must be between 1 and 255".to_string()),
+                    1..=255 if n <= default_size => Ok(n),
+                    _ => Err(format!(
+                        "Please enter a valid number between 1 and {}.",
+                        default_size
+                    )),
                 })
         };
 
-        let (term_width, term_height) = terminal::size()?;
-
-        // Get default grid dimensions based on terminal size. Make sure they are odd and at least 3.
-        let odd_and_min_3 = |n: u16| if n % 2 == 0 { n - 1 } else { n }.max(3);
-        let (default_grid_width, default_grid_height) = (
-            odd_and_min_3(term_width / GridCell::CELL_WIDTH),
-            odd_and_min_3(term_height),
-        );
-
-        // Default maze dimensions are half the grid dimensions, capped at u8::MAX
-        let (default_maze_width, default_maze_height) = (
-            (default_grid_width / 2).min(u8::MAX as u16) as u8,
-            (default_grid_height / 2).min(u8::MAX as u16) as u8,
-        );
-
-        // Validation closures based on default sizes
-        let validate_width = |s: &str| validate(s, default_maze_width);
-        let validate_height = |s: &str| validate(s, default_maze_height);
+        let validate_width = |s: &str| validate(s, true);
+        let validate_height = |s: &str| validate(s, false);
 
         let width = match App::prompt_with_validation(stdout, "Width: ", validate_width)? {
             Some(w) => w,
