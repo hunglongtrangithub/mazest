@@ -71,8 +71,8 @@ cargo run
 
 ### Interactive Controls (Planned)
 
-- **Pause/Resume** - Spacebar to pause/resume rendering
-- **Navigation** - Left/Right arrow keys to traverse rendering history
+- [x] **Pause/Resume** - Enter to pause/resume rendering
+- [x] **Navigation** - Left/Right arrow keys to traverse rendering history
 - **Speed Control** - Up/Down arrow keys to adjust rendering speed with on-screen indicator
 - **Restart** - 'R' key to restart the current generation
 - **Loop Toggle** - 'L' key to enable/disable indefinite rendering mode
