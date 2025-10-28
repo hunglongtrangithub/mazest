@@ -27,15 +27,19 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(max_history_grid_events: usize, render_refresh_time: Duration) -> Self {
+    pub fn new(max_history_grid_events: usize) -> Self {
         Self {
             stdout: std::io::stdout(),
             grid_dims: None,
             history: GridEventHistory::new(max_history_grid_events),
-            render_refresh_time,
+            render_refresh_time: Duration::from_micros(20),
         }
     }
 
+    pub fn calculate_render_refresh_time(&self, grid_width: u8, grid_height: u8) -> Duration {
+        let size = grid_width.max(grid_height) as usize;
+        self.render_refresh_time * (u8::MAX as u32 / size as u32).pow(2)
+    }
     /// Check if terminal size is sufficient for the given grid dimensions
     /// If not, display a message and wait for user to press Esc, then return Ok(false)
     /// Returns Ok(true) if terminal size is sufficient
@@ -281,6 +285,21 @@ impl Renderer {
                                 }
                             }
                         }
+                        UserActionEvent::SpeedUp => {
+                            // Increase rendering speed (decrease refresh time)
+                            if self.render_refresh_time > Duration::from_millis(10) {
+                                self.render_refresh_time -= Duration::from_millis(10);
+                                tracing::debug!(
+                                    "Increased rendering speed, new refresh time: {:?}",
+                                    self.render_refresh_time
+                                );
+                                self.log_to_terminal(Some(
+                                    format!("Render refresh time: {:?}", self.render_refresh_time)
+                                        .as_str()
+                                        .with(Color::Cyan),
+                                ))?;
+                            }
+                        }
                         UserActionEvent::Resize => {
                             // Check terminal size against current grid dimensions
                             if let Some((width, height)) = self.grid_dims {
@@ -294,6 +313,19 @@ impl Renderer {
                                     break;
                                 }
                             }
+                        }
+                        UserActionEvent::SlowDown => {
+                            // Decrease rendering speed (increase refresh time)
+                            self.render_refresh_time += Duration::from_millis(10);
+                            tracing::debug!(
+                                "Decreased rendering speed, new refresh time: {:?}",
+                                self.render_refresh_time
+                            );
+                            self.log_to_terminal(Some(
+                                format!("Render refresh time: {:?}", self.render_refresh_time)
+                                    .as_str()
+                                    .with(Color::Cyan),
+                            ))?;
                         }
                     }
                 }

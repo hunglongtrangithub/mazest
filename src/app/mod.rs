@@ -34,16 +34,23 @@ enum UserInputEvent {
 
 #[derive(Debug)]
 enum UserActionEvent {
+    /// Pause the animation
     Pause,
+    /// Resume the animation
     Resume,
+    /// Step forward in history or to the future when paused
     Forward,
+    /// Step backward in history when paused
     Backward,
+    /// Terminal resize
     Resize,
+    /// Increase animation speed
+    SpeedUp,
+    /// Decrease animation speed
+    SlowDown,
 }
 
 pub struct App {
-    /// Time taken to render each grid update when grid size is u8::MAX
-    render_refresh_rate: Duration,
     /// Timeout for receiving input events, a.k.a. how often to check for render done/cancel flags
     input_recv_timeout: Duration,
     /// Timeout for polling input events in the input thread, a.k.a. how often to check for render done/cancel flags
@@ -55,7 +62,7 @@ pub struct App {
 impl Default for App {
     fn default() -> Self {
         Self {
-            render_refresh_rate: Duration::from_micros(20),
+            // render_refresh_rate: Duration::from_micros(20),
             input_recv_timeout: Duration::from_millis(100),
             user_input_event_poll_timeout: Duration::from_millis(100),
             max_history_grid_events: 1000,
@@ -241,12 +248,11 @@ impl App {
             std::sync::mpsc::channel::<UserActionEvent>();
 
         // Spawn a thread to listen for grid updates and render the maze
-        let render_refresh_time = self.calculate_render_refresh_time(width, height);
         let max_history_grid_events = self.max_history_grid_events;
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
         let render_thread_handle = std::thread::spawn(move || {
-            let mut renderer = Renderer::new(max_history_grid_events, render_refresh_time);
+            let mut renderer = Renderer::new(max_history_grid_events);
             renderer.render(
                 grid_event_rx,
                 user_action_event_rx,
@@ -337,7 +343,8 @@ impl App {
             std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_CHANNEL_BUFFER);
 
         // Spawn a thread to listen for grid updates and render the maze
-        let render_refresh_time = self.calculate_render_refresh_time(width, height);
+        let renderer = Renderer::new(0);
+        let render_refresh_time = renderer.calculate_render_refresh_time(width, height);
         let render_thread_handle = std::thread::spawn(move || {
             loop {
                 match grid_event_rx.recv() {
@@ -451,6 +458,23 @@ impl App {
                             KeyCode::Right if is_paused => {
                                 // Step forward when paused
                                 if user_action_event_tx.send(UserActionEvent::Forward).is_err() {
+                                    // Receiver has been dropped, exit the loop
+                                    break;
+                                }
+                            }
+                            KeyCode::Up if is_paused => {
+                                // Speed up animation
+                                if user_action_event_tx.send(UserActionEvent::SpeedUp).is_err() {
+                                    // Receiver has been dropped, exit the loop
+                                    break;
+                                }
+                            }
+                            KeyCode::Down if is_paused => {
+                                // Slow down animation
+                                if user_action_event_tx
+                                    .send(UserActionEvent::SlowDown)
+                                    .is_err()
+                                {
                                     // Receiver has been dropped, exit the loop
                                     break;
                                 }
@@ -815,10 +839,5 @@ Maximum acceptable values are based on current terminal size.\r\n"
         stdout.flush()?;
 
         Ok(selected_option)
-    }
-
-    fn calculate_render_refresh_time(&self, grid_width: u8, grid_height: u8) -> Duration {
-        let size = grid_width.max(grid_height) as usize;
-        self.render_refresh_rate * (u8::MAX as u32 / size as u32).pow(2)
     }
 }

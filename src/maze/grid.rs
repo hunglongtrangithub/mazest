@@ -1,5 +1,3 @@
-use crossterm::style::{Color, Stylize};
-
 use super::cell::GridCell;
 
 pub struct Grid {
