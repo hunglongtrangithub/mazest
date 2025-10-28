@@ -64,13 +64,18 @@ impl Default for App {
 }
 
 impl App {
+    /// Number of log rows reserved at the bottom of the terminal
+    const NUM_LOG_ROWS: u16 = 1;
+    /// Maximum number of grid events to buffer in the channel between compute and render threads
     const MAX_EVENTS_IN_CHANNEL_BUFFER: usize = 1000;
+    /// Available maze generators
     const GENERATORS: [Generator; 4] = [
         Generator::RecurBacktrack,
         Generator::Kruskal,
         Generator::Prim,
         Generator::RecurDiv,
     ];
+    /// Available maze solvers
     const SOLVERS: [Solver; 4] = [Solver::Dfs, Solver::Bfs, Solver::Dijkstra, Solver::AStar];
 
     /// Set a panic hook to restore terminal state on panic
@@ -92,6 +97,7 @@ impl App {
         crossterm::queue!(
             stdout,
             terminal::EnterAlternateScreen,
+            terminal::DisableLineWrap,
             terminal::Clear(ClearType::All),
             cursor::Hide,
             cursor::MoveTo(0, 0)
@@ -103,7 +109,12 @@ impl App {
     /// Restore terminal to original state
     /// Leave alternate screen and disable raw mode
     pub fn restore_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
-        queue!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
+        queue!(
+            stdout,
+            terminal::LeaveAlternateScreen,
+            terminal::EnableLineWrap,
+            cursor::Show
+        )?;
         stdout.flush()?;
         terminal::disable_raw_mode()?;
         Ok(())
@@ -647,15 +658,15 @@ impl App {
         Ok(number_option)
     }
 
-    /// Calculate default maze size based on terminal size and cell size
+    /// Calculate max maze size based on terminal size and cell size
     /// Ensures the size is odd and at least 3
-    fn get_default_maze_size(term_size: u16, cell_size: u16) -> u8 {
+    fn get_max_maze_size(term_size: u16, cell_size: u16) -> u8 {
         // Get default grid dimension based on terminal size. Make sure they are odd and at least 3.
         let odd_and_min_3 = |n: u16| if n % 2 == 0 && n > 0 { n - 1 } else { n }.max(3);
-        let default_grid_size = odd_and_min_3(term_size / cell_size);
+        let max_grid_size = odd_and_min_3(term_size / cell_size);
 
         // Default maze dimensions are half the grid dimensions, capped at u8::MAX
-        (default_grid_size / 2).min(u8::MAX as u16) as u8
+        (max_grid_size / 2).min(u8::MAX as u16) as u8
     }
 
     /// Ask user for maze dimensions (width and height between 1 and 255)
@@ -670,11 +681,12 @@ Maximum acceptable values are based on current terminal size.\r\n"
 
         // Validation closure based on default sizes
         let validate = |s: &str, is_width| {
-            let default_size = if let Ok((term_width, term_height)) = terminal::size() {
+            let max_size = if let Ok((term_width, term_height)) = terminal::size() {
                 if is_width {
-                    App::get_default_maze_size(term_width, GridCell::CELL_WIDTH)
+                    App::get_max_maze_size(term_width, GridCell::CELL_WIDTH)
                 } else {
-                    App::get_default_maze_size(term_height, 1)
+                    // Reserve rows for logs
+                    App::get_max_maze_size(term_height.saturating_sub(App::NUM_LOG_ROWS), 1)
                 }
             } else {
                 // Fallback to max size if terminal size cannot be determined
@@ -682,17 +694,14 @@ Maximum acceptable values are based on current terminal size.\r\n"
             };
 
             if s.trim().is_empty() {
-                return Ok(default_size);
+                return Ok(max_size);
             }
 
-            let error_msg = format!(
-                "Please enter a valid number between 1 and {}.",
-                default_size
-            );
+            let error_msg = format!("Please enter a valid number between 1 and {}.", max_size);
             s.parse::<u8>()
                 .map_err(|_| error_msg.clone())
                 .and_then(|n| match n {
-                    1..=255 if n <= default_size => Ok(n),
+                    1..=255 if n <= max_size => Ok(n),
                     _ => Err(error_msg),
                 })
         };

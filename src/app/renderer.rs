@@ -146,6 +146,34 @@ impl Renderer {
         Ok(true)
     }
 
+    /// Log a message to the terminal below the grid without disrupting the grid display
+    /// The cursor position is saved and restored after logging
+    /// Returns Err if there was an I/O error
+    /// If msg is None, clears the log line
+    fn log_to_terminal(&mut self, msg: Option<style::StyledContent<&str>>) -> std::io::Result<()> {
+        queue!(
+            self.stdout,
+            // Save cursor position first
+            cursor::SavePosition,
+            // Move cursor to the log line (below the grid)
+            cursor::MoveTo(
+                0,
+                match self.grid_dims {
+                    Some((_, height)) => height, // Move cursor right below the grid
+                    None => 0, // Default to top line if grid dimensions not yet set
+                }
+            ),
+            // Clear previous log line
+            terminal::Clear(ClearType::CurrentLine),
+            // Print the log message
+            style::PrintStyledContent(msg.unwrap_or("".with(Color::Reset))),
+            // Go back to previous cursor position
+            cursor::RestorePosition,
+        )?;
+        self.stdout.flush()?;
+        Ok(())
+    }
+
     /// Handle user action events in a blocking manner until a Resume event is received
     /// This function returns when a Resume event is received
     fn handle_user_action_events(
@@ -164,6 +192,9 @@ impl Renderer {
                 Ok(event) => {
                     match event {
                         UserActionEvent::Resume => {
+                            // Clear any log messages
+                            self.log_to_terminal(None)?;
+                            tracing::debug!("Resuming rendering from pause");
                             // Step forward in the history and exit pause loop
                             while let Some(event) = self.history.history_forward().copied() {
                                 tracing::debug!(
@@ -185,6 +216,9 @@ impl Renderer {
                             if let Some(event) = event {
                                 tracing::debug!("Rendering history forward event: {:?}", event);
                                 self.render_grid_event(&event, cancel_signal)?;
+                                self.log_to_terminal(Some(
+                                    event.to_string().as_str().with(Color::Green),
+                                ))?;
                             } else {
                                 tracing::debug!("Attempting to step into the future");
                                 match grid_event_rx.try_recv() {
@@ -193,16 +227,26 @@ impl Renderer {
                                         self.render_grid_event(&event, cancel_signal)?;
                                         // Add event to history
                                         self.history.add_event(event);
+                                        self.log_to_terminal(Some(
+                                            event.to_string().as_str().with(Color::Green),
+                                        ))?;
                                     }
                                     Err(std::sync::mpsc::TryRecvError::Empty) => {
                                         // No action event, continue
                                         tracing::debug!("No future event available at the moment");
+                                        self.log_to_terminal(Some(
+                                            "No future event available at the moment"
+                                                .with(Color::Yellow),
+                                        ))?;
                                     }
                                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                                         // Channel disconnected, ignore and continue
                                         // This loop will just wait for Resume to exit the pause state,
                                         // And the main render loop will eventually exit when it detects the disconnection
                                         tracing::debug!("Grid event channel disconnected");
+                                        self.log_to_terminal(
+                                            Some("Grid event channel disconnected. Resume to exit the rendering".with(Color::Red)),
+                                        )?;
                                     }
                                 }
                             }
@@ -231,6 +275,9 @@ impl Renderer {
                                     self.render_grid_event(&revert_event, cancel_signal)?;
                                     // Move backward in history
                                     self.history.history_backward();
+                                    self.log_to_terminal(Some(
+                                        revert_event.to_string().as_str().with(Color::Yellow),
+                                    ))?;
                                 }
                             }
                         }

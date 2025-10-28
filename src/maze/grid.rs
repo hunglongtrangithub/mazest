@@ -1,3 +1,5 @@
+use crossterm::style::{Color, Stylize};
+
 use super::cell::GridCell;
 
 pub struct Grid {
@@ -19,6 +21,25 @@ pub enum GridEvent {
         old: GridCell,
         new: GridCell,
     },
+}
+
+impl std::fmt::Display for GridEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let content = match self {
+            GridEvent::Initial {
+                cell,
+                width,
+                height,
+            } => {
+                format!("Initial Grid: {}x{} with cell {:?}", width, height, cell)
+            }
+            GridEvent::Update { coord, old, new } => format!(
+                "Update at ({}, {}): {:?} -> {:?}",
+                coord.0, coord.1, old, new
+            ),
+        };
+        write!(f, "{}", content)
+    }
 }
 
 impl Grid {
