@@ -47,10 +47,10 @@ impl fmt::Display for GridCell {
         let styled_symbol = match self {
             GridCell::Path(path) => match path {
                 PathType::Path(orientation) => match orientation {
-                    // Orientation::Horizontal => "══".with(Color::Yellow),
-                    // Orientation::Vertical => "║ ".with(Color::Yellow),
-                    Orientation::Horizontal => "🟨".with(Color::Yellow),
-                    Orientation::Vertical => "🟨".with(Color::Yellow),
+                    Orientation::Horizontal => "══".with(Color::Yellow),
+                    Orientation::Vertical => "║ ".with(Color::Yellow),
+                    // Orientation::Horizontal => "🟨".with(Color::Yellow),
+                    // Orientation::Vertical => "🟨".with(Color::Yellow),
                 },
                 PathType::Empty => "  ".with(Color::Reset),
                 // PathType::Visited => "* ".with(Color::Blue),

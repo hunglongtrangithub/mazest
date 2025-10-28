@@ -3,7 +3,11 @@ mod renderer;
 
 use std::{
     io::{Stdout, Write},
-    sync::{Arc, Condvar, Mutex, atomic::AtomicBool, mpsc::Sender},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::AtomicBool,
+        mpsc::{Receiver, Sender},
+    },
     time::Duration,
 };
 
@@ -168,6 +172,21 @@ impl App {
             }
         };
 
+        queue!(
+            stdout,
+            style::PrintStyledContent(
+                "Controls:\r\n"
+                    .with(Color::Yellow)
+                    .attribute(Attribute::Bold)
+            ),
+            style::PrintStyledContent("  Enter: Pause/Resume animation\r\n".with(Color::Cyan)),
+            style::PrintStyledContent(
+                "  ←/→: Step backward/forward when paused\r\n".with(Color::Cyan)
+            ),
+            style::PrintStyledContent("  Esc: Exit\r\n\r\n".with(Color::Cyan)),
+        )?;
+
+        stdout.flush()?;
         // Ask if user wants to loop generation and solving
         let loop_animation = match App::select_from_menu(
             stdout,
@@ -251,93 +270,12 @@ impl App {
         });
 
         // Main thread loop to listen for user input events during rendering
-        let app_loop = |input_recv_timeout: Duration| {
-            tracing::info!("Started main app loop");
-            // Flag to indicate if the animation is currently paused
-            let mut is_paused = false;
-            loop {
-                // Check if render is done, or canceled by input thread
-                if render_done.load(std::sync::atomic::Ordering::Relaxed)
-                    || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    // Drop the receiver to signal input thread to exit
-                    drop(user_input_event_rx);
-                    break;
-                }
-
-                match user_input_event_rx.recv_timeout(input_recv_timeout) {
-                    Err(e) => {
-                        match e {
-                            std::sync::mpsc::RecvTimeoutError::Timeout => {
-                                // Skip to next iteration to check render_done again
-                                continue;
-                            }
-                            std::sync::mpsc::RecvTimeoutError::Disconnected => {
-                                // Input thread has exited, break the loop
-                                break;
-                            }
-                        }
-                    }
-                    Ok(event) => match event {
-                        UserInputEvent::KeyPress(key_event) => {
-                            match key_event.code {
-                                // Exit on Esc key
-                                KeyCode::Esc => {
-                                    tracing::debug!("Esc key pressed, cancelling render");
-                                    render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    // Close the channels to signal input thread and render thread to exit (if not already)
-                                    drop(user_input_event_rx);
-                                    drop(user_action_event_tx);
-                                    break;
-                                }
-                                KeyCode::Enter => {
-                                    // Toggle pause/resume on Enter key
-                                    let event = if is_paused {
-                                        UserActionEvent::Resume
-                                    } else {
-                                        UserActionEvent::Pause
-                                    };
-                                    tracing::debug!("Sending user action event: {:?}", event);
-                                    if user_action_event_tx.send(event).is_ok() {
-                                        // Toggle pause state
-                                        is_paused = !is_paused;
-                                    } else {
-                                        // Receiver has been dropped, exit the loop
-                                        break;
-                                    }
-                                }
-                                KeyCode::Left if is_paused => {
-                                    // Step backward when paused
-                                    if user_action_event_tx
-                                        .send(UserActionEvent::Backward)
-                                        .is_err()
-                                    {
-                                        // Receiver has been dropped, exit the loop
-                                        break;
-                                    }
-                                }
-                                KeyCode::Right if is_paused => {
-                                    // Step forward when paused
-                                    if user_action_event_tx.send(UserActionEvent::Forward).is_err()
-                                    {
-                                        // Receiver has been dropped, exit the loop
-                                        break;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        UserInputEvent::Resize => {
-                            if user_action_event_tx.send(UserActionEvent::Resize).is_err() {
-                                // Receiver has been dropped, exit the loop
-                                break;
-                            }
-                        }
-                    },
-                }
-            }
-        };
-        app_loop(self.input_recv_timeout);
+        self.app_loop(
+            user_input_event_rx,
+            user_action_event_tx,
+            render_done,
+            render_cancel,
+        );
 
         // Wait for input thread to finish
         let _ = input_thread_handle.join();
@@ -425,6 +363,99 @@ impl App {
         render_thread_handle.join().expect("Render thread panicked");
 
         Ok(())
+    }
+
+    /// App loop after starting input and render threads
+    fn app_loop(
+        &self,
+        user_input_event_rx: Receiver<UserInputEvent>,
+        user_action_event_tx: Sender<UserActionEvent>,
+        render_done: Arc<AtomicBool>,
+        render_cancel: Arc<AtomicBool>,
+    ) {
+        tracing::info!("Started main app loop");
+        // Flag to indicate if the animation is currently paused
+        let mut is_paused = false;
+        loop {
+            // Check if render is done, or canceled by input thread
+            if render_done.load(std::sync::atomic::Ordering::Relaxed)
+                || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                // Drop the receiver to signal input thread to exit
+                drop(user_input_event_rx);
+                break;
+            }
+
+            match user_input_event_rx.recv_timeout(self.input_recv_timeout) {
+                Err(e) => {
+                    match e {
+                        std::sync::mpsc::RecvTimeoutError::Timeout => {
+                            // Skip to next iteration to check render_done again
+                            continue;
+                        }
+                        std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                            // Input thread has exited, break the loop
+                            break;
+                        }
+                    }
+                }
+                Ok(event) => match event {
+                    UserInputEvent::KeyPress(key_event) => {
+                        match key_event.code {
+                            // Exit on Esc key
+                            KeyCode::Esc => {
+                                tracing::debug!("Esc key pressed, cancelling render");
+                                render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                // Close the channels to signal input thread and render thread to exit (if not already)
+                                drop(user_input_event_rx);
+                                drop(user_action_event_tx);
+                                break;
+                            }
+                            KeyCode::Enter => {
+                                // Toggle pause/resume on Enter key
+                                let event = if is_paused {
+                                    UserActionEvent::Resume
+                                } else {
+                                    UserActionEvent::Pause
+                                };
+                                tracing::debug!("Sending user action event: {:?}", event);
+                                if user_action_event_tx.send(event).is_ok() {
+                                    // Toggle pause state
+                                    is_paused = !is_paused;
+                                } else {
+                                    // Receiver has been dropped, exit the loop
+                                    break;
+                                }
+                            }
+                            KeyCode::Left if is_paused => {
+                                // Step backward when paused
+                                if user_action_event_tx
+                                    .send(UserActionEvent::Backward)
+                                    .is_err()
+                                {
+                                    // Receiver has been dropped, exit the loop
+                                    break;
+                                }
+                            }
+                            KeyCode::Right if is_paused => {
+                                // Step forward when paused
+                                if user_action_event_tx.send(UserActionEvent::Forward).is_err() {
+                                    // Receiver has been dropped, exit the loop
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    UserInputEvent::Resize => {
+                        if user_action_event_tx.send(UserActionEvent::Resize).is_err() {
+                            // Receiver has been dropped, exit the loop
+                            break;
+                        }
+                    }
+                },
+            }
+        }
     }
 
     /// Listen for user input events (key presses and resize)
