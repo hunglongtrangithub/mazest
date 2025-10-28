@@ -15,6 +15,55 @@ use crate::{
     maze::{cell::GridCell, grid::GridEvent},
 };
 
+/// Struct to manage render refresh time scaling based on a scale factor
+pub struct RenderRefreshTimeScale {
+    delta: Duration,
+    current: u8,
+}
+
+impl Default for RenderRefreshTimeScale {
+    fn default() -> Self {
+        // Base duration for scale factor of 1
+        let base = Duration::from_micros(20);
+        Self {
+            current: u8::MAX / 10,
+            delta: base,
+        }
+    }
+}
+
+impl RenderRefreshTimeScale {
+    /// Create a calibrated RenderRefreshTimeScale based on the grid dimensions
+    /// Set the current value so that the maximum grid size corresponds to the minimum duration
+    pub fn calibrated(grid_width: u8, grid_height: u8) -> Self {
+        let mut self_instance = Self::default();
+        let size = grid_width.max(grid_height);
+        self_instance.current = u8::MAX / size;
+        self_instance
+    }
+
+    /// Get the current duration based on the square of current scale value.
+    pub fn current(&self) -> Duration {
+        self.delta * (self.current as u32).pow(2)
+    }
+
+    /// Speed up the rendering by decreasing the current scale value by 1, down to a minimum of 1.
+    pub fn speed_up(&mut self) {
+        if self.current > 1 {
+            self.current -= 1;
+        } else {
+            // Cap at minimum time
+            self.current = 1;
+        }
+    }
+
+    /// Slow down the rendering by increasing the current scale value by 1, up to a maximum of u8::MAX.
+    pub fn slow_down(&mut self) {
+        // Cap at maximum time
+        self.current = self.current.saturating_add(1);
+    }
+}
+
 pub struct Renderer {
     /// Standard output handle to write to the terminal
     stdout: Stdout,
@@ -22,24 +71,26 @@ pub struct Renderer {
     grid_dims: Option<(u16, u16)>,
     /// History of grid events for browsing
     history: GridEventHistory,
-    /// Time to wait between rendering events to simulate refresh time
-    render_refresh_time: Duration,
+    /// Render refresh time scale
+    render_refresh_time_scale: RenderRefreshTimeScale,
 }
 
 impl Renderer {
-    pub fn new(max_history_grid_events: usize) -> Self {
+    /// Create a new Renderer instance
+    /// `max_history_grid_events` specifies the maximum number of grid events to keep in history
+    /// `maze_dims` is an optional tuple of (width, height) to calibrate the render refresh time scale
+    pub fn new(max_history_grid_events: usize, maze_dims: Option<(u8, u8)>) -> Self {
         Self {
             stdout: std::io::stdout(),
             grid_dims: None,
             history: GridEventHistory::new(max_history_grid_events),
-            render_refresh_time: Duration::from_micros(20),
+            render_refresh_time_scale: match maze_dims {
+                Some((width, height)) => RenderRefreshTimeScale::calibrated(width, height),
+                None => RenderRefreshTimeScale::default(),
+            },
         }
     }
 
-    pub fn calculate_render_refresh_time(&self, grid_width: u8, grid_height: u8) -> Duration {
-        let size = grid_width.max(grid_height) as usize;
-        self.render_refresh_time * (u8::MAX as u32 / size as u32).pow(2)
-    }
     /// Check if terminal size is sufficient for the given grid dimensions
     /// If not, display a message and wait for user to press Esc, then return Ok(false)
     /// Returns Ok(true) if terminal size is sufficient
@@ -207,7 +258,7 @@ impl Renderer {
                                 );
                                 self.render_grid_event(&event, cancel_signal)?;
                                 // TODO: Do we sleep here to simulate rendering time?
-                                std::thread::sleep(self.render_refresh_time);
+                                std::thread::sleep(self.render_refresh_time_scale.current());
                             }
                             break;
                         }
@@ -287,18 +338,19 @@ impl Renderer {
                         }
                         UserActionEvent::SpeedUp => {
                             // Increase rendering speed (decrease refresh time)
-                            if self.render_refresh_time > Duration::from_millis(10) {
-                                self.render_refresh_time -= Duration::from_millis(10);
-                                tracing::debug!(
-                                    "Increased rendering speed, new refresh time: {:?}",
-                                    self.render_refresh_time
-                                );
-                                self.log_to_terminal(Some(
-                                    format!("Render refresh time: {:?}", self.render_refresh_time)
-                                        .as_str()
-                                        .with(Color::Cyan),
-                                ))?;
-                            }
+                            self.render_refresh_time_scale.speed_up();
+                            tracing::debug!(
+                                "Increased rendering speed, new refresh time: {:?}",
+                                self.render_refresh_time_scale.current()
+                            );
+                            self.log_to_terminal(Some(
+                                format!(
+                                    "Render refresh time: {:?}",
+                                    self.render_refresh_time_scale.current()
+                                )
+                                .as_str()
+                                .with(Color::Cyan),
+                            ))?;
                         }
                         UserActionEvent::Resize => {
                             // Check terminal size against current grid dimensions
@@ -316,15 +368,18 @@ impl Renderer {
                         }
                         UserActionEvent::SlowDown => {
                             // Decrease rendering speed (increase refresh time)
-                            self.render_refresh_time += Duration::from_millis(10);
+                            self.render_refresh_time_scale.slow_down();
                             tracing::debug!(
                                 "Decreased rendering speed, new refresh time: {:?}",
-                                self.render_refresh_time
+                                self.render_refresh_time_scale.current()
                             );
                             self.log_to_terminal(Some(
-                                format!("Render refresh time: {:?}", self.render_refresh_time)
-                                    .as_str()
-                                    .with(Color::Cyan),
+                                format!(
+                                    "Render refresh time: {:?}",
+                                    self.render_refresh_time_scale.current()
+                                )
+                                .as_str()
+                                .with(Color::Cyan),
                             ))?;
                         }
                     }
@@ -392,7 +447,7 @@ impl Renderer {
                     self.history.add_event(event);
 
                     // Sleep a bit to simulate rendering time
-                    std::thread::sleep(self.render_refresh_time);
+                    std::thread::sleep(self.render_refresh_time_scale.current());
                 }
             }
         }

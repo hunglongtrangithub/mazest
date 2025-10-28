@@ -21,7 +21,7 @@ use crossterm::{
 use rand::Rng;
 
 use crate::{
-    app::renderer::Renderer,
+    app::renderer::{RenderRefreshTimeScale, Renderer},
     generators::{Generator, generate_maze},
     maze::{Maze, cell::GridCell, grid::GridEvent},
     solvers::{Solver, solve_maze},
@@ -201,6 +201,9 @@ impl App {
             style::PrintStyledContent(
                 "  ←/→: Step backward/forward when paused\r\n".with(Color::Cyan)
             ),
+            style::PrintStyledContent(
+                "  ↑/↓: Speed up/slow down animation when paused\r\n".with(Color::Cyan)
+            ),
             style::PrintStyledContent("  Esc: Exit\r\n\r\n".with(Color::Cyan)),
         )?;
 
@@ -252,7 +255,7 @@ impl App {
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
         let render_thread_handle = std::thread::spawn(move || {
-            let mut renderer = Renderer::new(max_history_grid_events);
+            let mut renderer = Renderer::new(max_history_grid_events, Some((width, height)));
             renderer.render(
                 grid_event_rx,
                 user_action_event_rx,
@@ -343,8 +346,7 @@ impl App {
             std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_CHANNEL_BUFFER);
 
         // Spawn a thread to listen for grid updates and render the maze
-        let renderer = Renderer::new(0);
-        let render_refresh_time = renderer.calculate_render_refresh_time(width, height);
+        let render_refresh_time = RenderRefreshTimeScale::calibrated(width, height).current();
         let render_thread_handle = std::thread::spawn(move || {
             loop {
                 match grid_event_rx.recv() {
@@ -354,7 +356,6 @@ impl App {
                     }
                     Ok(_event) => {
                         // For profiling mode, we just discard the event
-                        // In a real application, we could log them or analyze them
                         std::thread::sleep(render_refresh_time);
                     }
                 }
