@@ -151,6 +151,7 @@ impl Renderer {
     fn handle_user_action_events(
         &mut self,
         user_action_event_rx: &Receiver<UserActionEvent>,
+        grid_event_rx: &Receiver<GridEvent>,
         cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<()> {
         // Pause rendering until Resume event is received
@@ -184,6 +185,26 @@ impl Renderer {
                             if let Some(event) = event {
                                 tracing::debug!("Rendering history forward event: {:?}", event);
                                 self.render_grid_event(&event, cancel_signal)?;
+                            } else {
+                                tracing::debug!("Attempting to step into the future");
+                                match grid_event_rx.try_recv() {
+                                    Ok(event) => {
+                                        tracing::debug!("Rendering new future event: {:?}", event);
+                                        self.render_grid_event(&event, cancel_signal)?;
+                                        // Add event to history
+                                        self.history.add_event(event);
+                                    }
+                                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                        // No action event, continue
+                                        tracing::debug!("No future event available at the moment");
+                                    }
+                                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                        // Channel disconnected, ignore and continue
+                                        // This loop will just wait for Resume to exit the pause state,
+                                        // And the main render loop will eventually exit when it detects the disconnection
+                                        tracing::debug!("Grid event channel disconnected");
+                                    }
+                                }
                             }
                         }
                         UserActionEvent::Backward => {
@@ -256,7 +277,11 @@ impl Renderer {
                     tracing::debug!("Received user action event: {:?}", action_event);
                     if let UserActionEvent::Pause = action_event {
                         // Block and handle subsequent user action events
-                        self.handle_user_action_events(&user_action_event_rx, cancel_signal)?;
+                        self.handle_user_action_events(
+                            &user_action_event_rx,
+                            &grid_event_rx,
+                            cancel_signal,
+                        )?;
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
