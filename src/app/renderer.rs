@@ -84,6 +84,101 @@ impl Renderer {
         Ok(true)
     }
 
+    /// Render a single grid event to the terminal
+    /// Returns Ok(true) if rendering completed successfully
+    /// Returns Ok(false) if rendering was cancelled
+    /// Returns Err if there was an I/O error
+    /// `cancel_signal` is used to wait for cancellation signal from user input thread if terminal resize is needed
+    fn render_grid_event(
+        &mut self,
+        event: &GridEvent,
+        cancel_signal: (&Mutex<bool>, &Condvar),
+    ) -> std::io::Result<bool> {
+        // Render the event
+        match event {
+            GridEvent::Initial {
+                cell,
+                width,
+                height,
+            } => {
+                let width = *width;
+                let height = *height;
+                self.grid_dims = Some((width, height));
+
+                if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
+                    return Ok(false);
+                }
+
+                self.stdout.queue(cursor::MoveTo(0, 0))?;
+                for _y in 0..height {
+                    for _x in 0..width {
+                        self.stdout.queue(style::Print(cell))?;
+                    }
+                    self.stdout.queue(style::Print("\r\n"))?;
+                }
+                self.stdout.flush()?;
+            }
+            GridEvent::Update {
+                coord,
+                old: _old,
+                new,
+            } => match self.grid_dims {
+                Some((width, height)) => {
+                    if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
+                        return Ok(false);
+                    }
+                    // Move the cursor to the specified coordinate and print the
+                    // new cell using the grid dimensions
+                    queue!(
+                        self.stdout,
+                        cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
+                        style::Print(new)
+                    )?;
+                    self.stdout.flush()?;
+                }
+                // Skip if width and height are not set
+                None => {}
+            },
+        }
+        Ok(true)
+    }
+
+    /// Handle user action events in a blocking manner until a Resume event is received
+    fn handle_user_action_events(&mut self, user_action_event_rx: &Receiver<UserActionEvent>) {
+        // Pause rendering until Resume event is received
+        loop {
+            match user_action_event_rx.recv() {
+                Err(_e) => {
+                    // Channel disconnected, ignore and continue
+                    break;
+                }
+                Ok(event) => {
+                    match event {
+                        UserActionEvent::Resume => {
+                            // Resume rendering
+                            break;
+                        }
+                        UserActionEvent::Pause => {
+                            // Already paused, ignore
+                        }
+                        UserActionEvent::Forward => {
+                            // Browse forward in history
+                            if let Some(event) = self.history.history_forward() {
+                                tracing::debug!("Rendering history forward event: {:?}", event);
+                            }
+                        }
+                        UserActionEvent::Backward => {
+                            // Browse backward in history
+                            if let Some(event) = self.history.history_backward() {
+                                tracing::debug!("Rendering history backward event: {:?}", event);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Render loop that processes events from the receiver and renders them at specified intervals
     /// Returns Ok(true) if rendering completed successfully
     /// Returns Ok(false) if rendering was cancelled
@@ -106,44 +201,8 @@ impl Renderer {
                 Ok(action_event) => {
                     tracing::debug!("Received user action event: {:?}", action_event);
                     if let UserActionEvent::Pause = action_event {
-                        // Pause rendering until Resume event is received
-                        loop {
-                            match user_action_event_rx.recv() {
-                                Err(_e) => {
-                                    // Channel disconnected, ignore and continue
-                                    break;
-                                }
-                                Ok(event) => {
-                                    match event {
-                                        UserActionEvent::Resume => {
-                                            // Resume rendering
-                                            break;
-                                        }
-                                        UserActionEvent::Pause => {
-                                            // Already paused, ignore
-                                        }
-                                        UserActionEvent::Forward => {
-                                            // Browse forward in history
-                                            if let Some(event) = self.history.history_forward() {
-                                                tracing::debug!(
-                                                    "Rendering history forward event: {:?}",
-                                                    event
-                                                );
-                                            }
-                                        }
-                                        UserActionEvent::Backward => {
-                                            // Browse backward in history
-                                            if let Some(event) = self.history.history_backward() {
-                                                tracing::debug!(
-                                                    "Rendering history backward event: {:?}",
-                                                    event
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // Block and handle subsequent user action events
+                        self.handle_user_action_events(&user_action_event_rx);
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -153,75 +212,22 @@ impl Renderer {
                     // Channel disconnected, ignore and continue
                 }
             }
-            // Block and wait for the next event
+            // Block and wait for the next grid event
             match grid_event_rx.recv() {
                 Err(_e) => {
                     // Channel disconnected, exit the thread
                     break;
                 }
                 Ok(event) => {
-                    // Render the event
                     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                         return Ok(false);
                     }
 
-                    match event {
-                        GridEvent::Initial {
-                            cell,
-                            width,
-                            height,
-                        } => {
-                            self.grid_dims = Some((width, height));
-                            if !Renderer::check_resize(
-                                &mut self.stdout,
-                                width,
-                                height,
-                                cancel_signal,
-                            )? {
-                                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                return Ok(false);
-                            }
-
-                            // Clear screen
-                            // Move to top-left corner
-                            // Print the whole grid with the specified cell
-
-                            self.stdout.queue(cursor::MoveTo(0, 0))?;
-                            for _y in 0..height {
-                                for _x in 0..width {
-                                    self.stdout.queue(style::Print(cell))?;
-                                }
-                                self.stdout.queue(style::Print("\r\n"))?;
-                            }
-                            self.stdout.flush()?;
-                        }
-                        GridEvent::Update {
-                            coord,
-                            old: _old,
-                            new,
-                        } => match self.grid_dims {
-                            Some((width, height)) => {
-                                if !Renderer::check_resize(
-                                    &mut self.stdout,
-                                    width,
-                                    height,
-                                    cancel_signal,
-                                )? {
-                                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    return Ok(false);
-                                }
-                                // Move the cursor to the specified coordinate and print the
-                                // new cell using the grid dimensions
-                                queue!(
-                                    self.stdout,
-                                    cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
-                                    style::Print(new)
-                                )?;
-                                self.stdout.flush()?;
-                            }
-                            // Skip if width and height are not set
-                            None => {}
-                        },
+                    // Render the grid event
+                    if !self.render_grid_event(&event, cancel_signal)? {
+                        // Rendering was cancelled, set cancel flag and exit
+                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return Ok(false);
                     }
 
                     // Add event to history
@@ -237,6 +243,7 @@ impl Renderer {
             queue!(self.stdout, cursor::MoveTo(0, height), cursor::Show,)?;
             self.stdout.flush()?;
         }
+        // Set done flag
         done.store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(true)
     }
