@@ -52,4 +52,8 @@ impl GridEventHistory {
             }
         }
     }
+
+    pub fn current_event(&self) -> Option<&GridEvent> {
+        self.event_history.get(self.history_index)
+    }
 }

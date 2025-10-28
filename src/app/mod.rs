@@ -25,6 +25,7 @@ use crate::{
 
 enum UserInputEvent {
     KeyPress(event::KeyEvent),
+    Resize,
 }
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ enum UserActionEvent {
     Resume,
     Forward,
     Backward,
+    Resize,
 }
 
 pub struct App {
@@ -214,11 +216,10 @@ impl App {
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
         let render_thread_handle = std::thread::spawn(move || {
-            let mut renderer = Renderer::new(max_history_grid_events);
+            let mut renderer = Renderer::new(max_history_grid_events, render_refresh_time);
             renderer.render(
                 grid_event_rx,
                 user_action_event_rx,
-                render_refresh_time,
                 &render_cancel_for_render,
                 &render_done_for_render,
                 (&cancel_signal.0, &cancel_signal.1),
@@ -324,6 +325,12 @@ impl App {
                                     }
                                 }
                                 _ => {}
+                            }
+                        }
+                        UserInputEvent::Resize => {
+                            if user_action_event_tx.send(UserActionEvent::Resize).is_err() {
+                                // Receiver has been dropped, exit the loop
+                                break;
                             }
                         }
                     },
@@ -448,7 +455,8 @@ impl App {
                 event::Event::Key(key_event) if key_event.kind == event::KeyEventKind::Press => {
                     UserInputEvent::KeyPress(key_event)
                 }
-                _ => continue,
+                event::Event::Resize(_, _) => UserInputEvent::Resize,
+                _ => continue, // Ignore other events
             };
 
             // Should exit input thread on Esc key

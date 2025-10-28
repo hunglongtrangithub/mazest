@@ -7,7 +7,7 @@ pub struct Grid {
     grid_event_tx: Option<std::sync::mpsc::SyncSender<GridEvent>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum GridEvent {
     Initial {
         cell: GridCell,
