@@ -27,12 +27,12 @@ pub struct RenderRefreshTimeScale {
 
 impl Default for RenderRefreshTimeScale {
     fn default() -> Self {
-        // Base duration multiplier for level 1
-        let base = Duration::from_micros(20);
+        // Base duration multiplier for topmost level
+        let base = Duration::from_micros(10);
         Self {
             delta: base,
-            levels: 10, // default quantization
-            level: 5,   // default mid-speed
+            levels: 20, // default quantization
+            level: 10,  // default mid-speed
         }
     }
 }
@@ -47,7 +47,7 @@ impl RenderRefreshTimeScale {
         let max = u8::MAX as f32;
         let frac = (size / max).clamp(0.0, 1.0);
         // large size => faster, but clamp properly
-        let lvl = (frac * (scale.levels.saturating_sub(1) as f32)).round() as usize;
+        let lvl = (frac * frac * (scale.levels.saturating_sub(1) as f32)).round() as usize;
         scale.level = lvl.min(scale.levels.saturating_sub(1));
         scale
     }
