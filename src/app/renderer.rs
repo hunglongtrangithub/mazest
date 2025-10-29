@@ -9,6 +9,7 @@ use crossterm::{
     style::{self, Attribute, Color, Stylize},
     terminal::{self, ClearType},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{UserActionEvent, history::GridEventHistory},
@@ -202,7 +203,6 @@ impl Renderer {
             } => {
                 let width = *width;
                 let height = *height;
-                tracing::debug!("Rendering initial grid of size {}x{}", width, height);
                 self.grid_dims = Some((width, height));
 
                 if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
@@ -243,6 +243,15 @@ impl Renderer {
         Ok(true)
     }
 
+    fn get_width(&self) -> std::io::Result<u16> {
+        // Get grid width / terminal width for logging purposes
+        let width = match self.grid_dims {
+            Some((w, _)) => w * GridCell::CELL_WIDTH,
+            None => terminal::size()?.0,
+        };
+        Ok(width)
+    }
+
     /// Log a message to the terminal below the grid without disrupting the grid display
     /// The cursor position is saved and restored after logging
     /// Returns Err if there was an I/O error
@@ -267,7 +276,17 @@ impl Renderer {
             terminal::Clear(ClearType::CurrentLine),
             // Print the log message
             style::PrintStyledContent(match msg {
-                Some(m) => m,
+                Some(msg) => {
+                    let width = terminal::size()?.0 as usize;
+                    let content = msg.content();
+                    if content.width() > width {
+                        // Truncate message to fit terminal width
+                        let truncated = format!("{}...", &content[..width.saturating_sub(3)]);
+                        style::StyledContent::new(*msg.style(), truncated)
+                    } else {
+                        msg
+                    }
+                }
                 None => "".to_string().with(Color::Reset),
             }),
             // Go back to previous cursor position
@@ -277,19 +296,144 @@ impl Renderer {
         Ok(())
     }
 
+    /// Handle a single user action event in the paused state
+    /// Returns Ok(true) if rendering should break from pause (on Resume)
+    /// Returns Ok(false) otherwise
+    /// Returns Err if there was an I/O error
+    fn handle_user_action_event(
+        &mut self,
+        event: &UserActionEvent,
+        grid_event_rx: &Receiver<GridEvent>,
+        cancel_signal: (&Mutex<bool>, &Condvar),
+    ) -> std::io::Result<bool> {
+        match event {
+            UserActionEvent::Resume => {
+                // Clear any log messages
+                self.log_to_terminal(None)?;
+                tracing::debug!("Resuming rendering from pause");
+                // Step forward in the history and exit pause loop
+                while let Some(event) = self.history.history_forward().copied() {
+                    tracing::debug!("Rendering history forward event for resume: {:?}", event);
+                    self.render_grid_event(&event, cancel_signal)?;
+                    // TODO: Do we sleep here to simulate rendering time?
+                    std::thread::sleep(self.render_refresh_time_scale.current());
+                }
+            }
+            UserActionEvent::Pause => {
+                // Already paused, ignore
+            }
+            UserActionEvent::Forward => {
+                // Step forward and get the event
+                let event = self.history.history_forward().copied();
+                if let Some(event) = event {
+                    tracing::debug!("Rendering history forward event: {:?}", event);
+                    self.render_grid_event(&event, cancel_signal)?;
+                    self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
+                } else {
+                    tracing::debug!("Attempting to step into the future");
+                    match grid_event_rx.try_recv() {
+                        Ok(event) => {
+                            tracing::debug!("Rendering new future event: {:?}", event);
+                            self.render_grid_event(&event, cancel_signal)?;
+                            // Add event to history
+                            self.history.add_event(event);
+                            self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            // No action event, continue
+                            tracing::debug!("No future event available at the moment");
+                            self.log_to_terminal(Some(
+                                "No future event available at the moment"
+                                    .to_string()
+                                    .with(Color::Yellow),
+                            ))?;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            // Channel disconnected, ignore and continue
+                            // This loop will just wait for Resume to exit the pause state,
+                            // And the main render loop will eventually exit when it detects the disconnection
+                            tracing::debug!("Grid event channel disconnected");
+                            self.log_to_terminal(Some(
+                                "Grid event channel disconnected. Resume to exit the rendering"
+                                    .to_string()
+                                    .with(Color::Red),
+                            ))?;
+                        }
+                    };
+                }
+            }
+            UserActionEvent::Backward => {
+                // Get the current event
+                let event = self.history.current_event().copied();
+                if let Some(event) = event {
+                    // Craft the revert event
+                    let revert_event = match event {
+                        GridEvent::Initial { .. } => None, // Cannot revert initial event
+                        GridEvent::Update { coord, old, new } => Some(GridEvent::Update {
+                            coord,
+                            old: new,
+                            new: old,
+                        }),
+                    };
+                    // Render the revert event
+                    if let Some(revert_event) = revert_event {
+                        tracing::debug!("Rendering history backward event: {:?}", revert_event);
+                        self.render_grid_event(&revert_event, cancel_signal)?;
+                        // Move backward in history
+                        self.history.history_backward();
+                        self.log_to_terminal(Some(revert_event.to_string().with(Color::Yellow)))?;
+                    }
+                }
+            }
+            UserActionEvent::SpeedUp => {
+                // Increase rendering speed (decrease refresh time)
+                self.render_refresh_time_scale.speed_up();
+                tracing::debug!(
+                    "Increased rendering speed, new refresh time: {:?}",
+                    self.render_refresh_time_scale.current()
+                );
+                self.log_to_terminal(Some(
+                    self.render_refresh_time_scale
+                        .make_scale_bar(self.get_width()?)
+                        .stylize(),
+                ))?;
+            }
+            UserActionEvent::Resize => {
+                // Check terminal size against current grid dimensions
+                if let Some((width, height)) = self.grid_dims {
+                    if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
+                        // Rendering was cancelled, exit
+                        return Ok(false);
+                    }
+                }
+            }
+            UserActionEvent::SlowDown => {
+                // Decrease rendering speed (increase refresh time)
+                self.render_refresh_time_scale.slow_down();
+                tracing::debug!(
+                    "Decreased rendering speed, new refresh time: {:?}",
+                    self.render_refresh_time_scale.current()
+                );
+                self.log_to_terminal(Some(
+                    self.render_refresh_time_scale
+                        .make_scale_bar(self.get_width()?)
+                        .stylize(),
+                ))?;
+            }
+        };
+
+        // Only signal pause break on Resume event
+        Ok(matches!(event, UserActionEvent::Resume))
+    }
+
     /// Handle user action events in a blocking manner until a Resume event is received
     /// This function returns when a Resume event is received
-    fn handle_user_action_events(
+    fn listen_to_user_action_events(
         &mut self,
         user_action_event_rx: &Receiver<UserActionEvent>,
         grid_event_rx: &Receiver<GridEvent>,
         cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<()> {
-        // Get terminal width for logging purposes
-        let width = match self.grid_dims {
-            Some((w, _)) => w * GridCell::CELL_WIDTH,
-            None => terminal::size()?.0,
-        };
         // Pause rendering until Resume event is received
         loop {
             match user_action_event_rx.recv() {
@@ -298,136 +442,12 @@ impl Renderer {
                     break;
                 }
                 Ok(event) => {
-                    match event {
-                        UserActionEvent::Resume => {
-                            // Clear any log messages
-                            self.log_to_terminal(None)?;
-                            tracing::debug!("Resuming rendering from pause");
-                            // Step forward in the history and exit pause loop
-                            while let Some(event) = self.history.history_forward().copied() {
-                                tracing::debug!(
-                                    "Rendering history forward event for resume: {:?}",
-                                    event
-                                );
-                                self.render_grid_event(&event, cancel_signal)?;
-                                // TODO: Do we sleep here to simulate rendering time?
-                                std::thread::sleep(self.render_refresh_time_scale.current());
-                            }
-                            break;
-                        }
-                        UserActionEvent::Pause => {
-                            // Already paused, ignore
-                        }
-                        UserActionEvent::Forward => {
-                            // Step forward and get the event
-                            let event = self.history.history_forward().copied();
-                            if let Some(event) = event {
-                                tracing::debug!("Rendering history forward event: {:?}", event);
-                                self.render_grid_event(&event, cancel_signal)?;
-                                self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
-                            } else {
-                                tracing::debug!("Attempting to step into the future");
-                                match grid_event_rx.try_recv() {
-                                    Ok(event) => {
-                                        tracing::debug!("Rendering new future event: {:?}", event);
-                                        self.render_grid_event(&event, cancel_signal)?;
-                                        // Add event to history
-                                        self.history.add_event(event);
-                                        self.log_to_terminal(Some(
-                                            event.to_string().with(Color::Green),
-                                        ))?;
-                                    }
-                                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                                        // No action event, continue
-                                        tracing::debug!("No future event available at the moment");
-                                        self.log_to_terminal(Some(
-                                            "No future event available at the moment"
-                                                .to_string()
-                                                .with(Color::Yellow),
-                                        ))?;
-                                    }
-                                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                        // Channel disconnected, ignore and continue
-                                        // This loop will just wait for Resume to exit the pause state,
-                                        // And the main render loop will eventually exit when it detects the disconnection
-                                        tracing::debug!("Grid event channel disconnected");
-                                        self.log_to_terminal(
-                                            Some("Grid event channel disconnected. Resume to exit the rendering".to_string().with(Color::Red)),
-                                        )?;
-                                    }
-                                }
-                            }
-                        }
-                        UserActionEvent::Backward => {
-                            // Get the current event
-                            let event = self.history.current_event().copied();
-                            if let Some(event) = event {
-                                // Craft the revert event
-                                let revert_event = match event {
-                                    GridEvent::Initial { .. } => None, // Cannot revert initial event
-                                    GridEvent::Update { coord, old, new } => {
-                                        Some(GridEvent::Update {
-                                            coord,
-                                            old: new,
-                                            new: old,
-                                        })
-                                    }
-                                };
-                                // Render the revert event
-                                if let Some(revert_event) = revert_event {
-                                    tracing::debug!(
-                                        "Rendering history backward event: {:?}",
-                                        revert_event
-                                    );
-                                    self.render_grid_event(&revert_event, cancel_signal)?;
-                                    // Move backward in history
-                                    self.history.history_backward();
-                                    self.log_to_terminal(Some(
-                                        revert_event.to_string().with(Color::Yellow),
-                                    ))?;
-                                }
-                            }
-                        }
-                        UserActionEvent::SpeedUp => {
-                            // Increase rendering speed (decrease refresh time)
-                            self.render_refresh_time_scale.speed_up();
-                            tracing::debug!(
-                                "Increased rendering speed, new refresh time: {:?}",
-                                self.render_refresh_time_scale.current()
-                            );
-                            self.log_to_terminal(Some(
-                                self.render_refresh_time_scale
-                                    .make_scale_bar(width)
-                                    .with(Color::Magenta),
-                            ))?;
-                        }
-                        UserActionEvent::Resize => {
-                            // Check terminal size against current grid dimensions
-                            if let Some((width, height)) = self.grid_dims {
-                                if !Renderer::check_resize(
-                                    &mut self.stdout,
-                                    width,
-                                    height,
-                                    cancel_signal,
-                                )? {
-                                    // Rendering was cancelled, exit
-                                    break;
-                                }
-                            }
-                        }
-                        UserActionEvent::SlowDown => {
-                            // Decrease rendering speed (increase refresh time)
-                            self.render_refresh_time_scale.slow_down();
-                            tracing::debug!(
-                                "Decreased rendering speed, new refresh time: {:?}",
-                                self.render_refresh_time_scale.current()
-                            );
-                            self.log_to_terminal(Some(
-                                self.render_refresh_time_scale
-                                    .make_scale_bar(width)
-                                    .with(Color::Magenta),
-                            ))?;
-                        }
+                    if self.handle_user_action_event(&event, grid_event_rx, cancel_signal)? {
+                        // Resume event received, exit pause loop
+                        break;
+                    } else {
+                        // Not a Resume event, continue pausing
+                        continue;
                     }
                 }
             }
@@ -455,13 +475,31 @@ impl Renderer {
             match user_action_event_rx.try_recv() {
                 Ok(action_event) => {
                     tracing::debug!("Received user action event: {:?}", action_event);
-                    if let UserActionEvent::Pause = action_event {
-                        // Block and handle subsequent user action events
-                        self.handle_user_action_events(
-                            &user_action_event_rx,
-                            &grid_event_rx,
-                            cancel_signal,
-                        )?;
+                    match action_event {
+                        UserActionEvent::Pause => {
+                            // Block and handle subsequent user action events
+                            tracing::info!("Pausing rendering on user request");
+                            self.listen_to_user_action_events(
+                                &user_action_event_rx,
+                                &grid_event_rx,
+                                cancel_signal,
+                            )?;
+                        }
+                        UserActionEvent::SpeedUp
+                        | UserActionEvent::SlowDown
+                        | UserActionEvent::Resize => {
+                            // Handle these events immediately
+                            tracing::info!(
+                                "Handling user action event immediately: {:?}",
+                                action_event
+                            );
+                            self.handle_user_action_event(
+                                &action_event,
+                                &grid_event_rx,
+                                cancel_signal,
+                            )?;
+                        }
+                        _ => {}
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {

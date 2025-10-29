@@ -104,7 +104,6 @@ impl App {
         crossterm::queue!(
             stdout,
             terminal::EnterAlternateScreen,
-            terminal::DisableLineWrap,
             terminal::Clear(ClearType::All),
             cursor::Hide,
             cursor::MoveTo(0, 0)
@@ -116,12 +115,7 @@ impl App {
     /// Restore terminal to original state
     /// Leave alternate screen and disable raw mode
     pub fn restore_terminal(stdout: &mut Stdout) -> std::io::Result<()> {
-        queue!(
-            stdout,
-            terminal::LeaveAlternateScreen,
-            terminal::EnableLineWrap,
-            cursor::Show
-        )?;
+        queue!(stdout, terminal::LeaveAlternateScreen, cursor::Show)?;
         stdout.flush()?;
         terminal::disable_raw_mode()?;
         Ok(())
@@ -463,14 +457,14 @@ impl App {
                                     break;
                                 }
                             }
-                            KeyCode::Up if is_paused => {
+                            KeyCode::Up => {
                                 // Speed up animation
                                 if user_action_event_tx.send(UserActionEvent::SpeedUp).is_err() {
                                     // Receiver has been dropped, exit the loop
                                     break;
                                 }
                             }
-                            KeyCode::Down if is_paused => {
+                            KeyCode::Down => {
                                 // Slow down animation
                                 if user_action_event_tx
                                     .send(UserActionEvent::SlowDown)
