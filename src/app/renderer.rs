@@ -15,52 +15,93 @@ use crate::{
     maze::{cell::GridCell, grid::GridEvent},
 };
 
-/// Struct to manage render refresh time scaling based on a scale factor
+/// Struct to manage render refresh time scaling based on a quantized level scale
 pub struct RenderRefreshTimeScale {
     delta: Duration,
-    current: u8,
+    /// number of discrete levels (quantization). e.g. 10
+    levels: usize,
+    /// current level in [0, levels - 1], 0 is slowest, levels-1 is fastest
+    level: usize,
 }
 
 impl Default for RenderRefreshTimeScale {
     fn default() -> Self {
-        // Base duration for scale factor of 1
+        // Base duration multiplier for level 1
         let base = Duration::from_micros(20);
         Self {
-            current: u8::MAX / 10,
             delta: base,
+            levels: 10, // default quantization
+            level: 5,   // default mid-speed
         }
     }
 }
 
 impl RenderRefreshTimeScale {
     /// Create a calibrated RenderRefreshTimeScale based on the grid dimensions
-    /// Set the current value so that the maximum grid size corresponds to the minimum duration
     pub fn calibrated(grid_width: u8, grid_height: u8) -> Self {
-        let mut self_instance = Self::default();
-        let size = grid_width.max(grid_height);
-        self_instance.current = u8::MAX / size;
-        self_instance
+        let mut scale = Self::default();
+        // Map grid size to a sensible starting level.
+        // Larger grids -> faster rendering (higher level index).
+        let size = grid_width.max(grid_height) as f32;
+        let max = u8::MAX as f32;
+        let frac = (size / max).clamp(0.0, 1.0);
+        // large size => faster, but clamp properly
+        let lvl = (frac * (scale.levels.saturating_sub(1) as f32)).round() as usize;
+        scale.level = lvl.min(scale.levels.saturating_sub(1));
+        scale
     }
 
-    /// Get the current duration based on the square of current scale value.
+    /// Create a scale bar string representing the current render refresh time scale
+    /// The scale is quantized into `self.levels` segments. If terminal width is smaller
+    /// than the requested number of segments, segments will be capped to width.
+    fn make_scale_bar(&self, width: u16) -> String {
+        let w = width as usize;
+        if w == 0 {
+            return "".to_string();
+        }
+
+        // desired number of segments = self.levels, but cap to available character width
+        let seg_count = self.levels.min(w).max(1);
+        // integer width per segment and remainder distribution
+        let base_seg_w = w / seg_count;
+        let rem = w % seg_count;
+
+        // Build segment sizes: first `rem` segments get +1 char
+        let seg_sizes = (0..seg_count).map(|i| base_seg_w + if i < rem { 1 } else { 0 });
+
+        // Create the bar: filled segments up to `self.level`, rest empty
+        seg_sizes
+            .enumerate()
+            .map(|(i, seg_w)| {
+                let ch = if i <= self.level { '█' } else { '░' };
+                ch.to_string().repeat(seg_w)
+            })
+            .collect::<String>()
+    }
+
+    /// Get the current duration based on the square of (level+1).
+    /// Level levels-1 -> delta * 1^2 (fastest), level 0 -> delta * levels^2 (slowest)
     pub fn current(&self) -> Duration {
-        self.delta * (self.current as u32).pow(2)
+        let factor = ((self.levels - self.level) as u32).saturating_add(1);
+        self.delta * factor * factor
     }
 
-    /// Speed up the rendering by decreasing the current scale value by 1, down to a minimum of 1.
-    pub fn speed_up(&mut self) {
-        if self.current > 1 {
-            self.current -= 1;
+    /// Speed up the rendering by increasing the current level (toward levels-1).
+    fn speed_up(&mut self) {
+        if self.level < self.levels.saturating_sub(1) {
+            self.level += 1;
         } else {
-            // Cap at minimum time
-            self.current = 1;
+            self.level = self.levels.saturating_sub(1);
         }
     }
 
-    /// Slow down the rendering by increasing the current scale value by 1, up to a maximum of u8::MAX.
-    pub fn slow_down(&mut self) {
-        // Cap at maximum time
-        self.current = self.current.saturating_add(1);
+    /// Slow down the rendering by decreasing the current level (toward 0).
+    fn slow_down(&mut self) {
+        if self.level > 0 {
+            self.level -= 1;
+        } else {
+            self.level = 0;
+        }
     }
 }
 
@@ -161,6 +202,7 @@ impl Renderer {
             } => {
                 let width = *width;
                 let height = *height;
+                tracing::debug!("Rendering initial grid of size {}x{}", width, height);
                 self.grid_dims = Some((width, height));
 
                 if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
@@ -205,7 +247,10 @@ impl Renderer {
     /// The cursor position is saved and restored after logging
     /// Returns Err if there was an I/O error
     /// If msg is None, clears the log line
-    fn log_to_terminal(&mut self, msg: Option<style::StyledContent<&str>>) -> std::io::Result<()> {
+    fn log_to_terminal(
+        &mut self,
+        msg: Option<style::StyledContent<String>>,
+    ) -> std::io::Result<()> {
         queue!(
             self.stdout,
             // Save cursor position first
@@ -221,7 +266,10 @@ impl Renderer {
             // Clear previous log line
             terminal::Clear(ClearType::CurrentLine),
             // Print the log message
-            style::PrintStyledContent(msg.unwrap_or("".with(Color::Reset))),
+            style::PrintStyledContent(match msg {
+                Some(m) => m,
+                None => "".to_string().with(Color::Reset),
+            }),
             // Go back to previous cursor position
             cursor::RestorePosition,
         )?;
@@ -237,6 +285,11 @@ impl Renderer {
         grid_event_rx: &Receiver<GridEvent>,
         cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<()> {
+        // Get terminal width for logging purposes
+        let width = match self.grid_dims {
+            Some((w, _)) => w * GridCell::CELL_WIDTH,
+            None => terminal::size()?.0,
+        };
         // Pause rendering until Resume event is received
         loop {
             match user_action_event_rx.recv() {
@@ -271,9 +324,7 @@ impl Renderer {
                             if let Some(event) = event {
                                 tracing::debug!("Rendering history forward event: {:?}", event);
                                 self.render_grid_event(&event, cancel_signal)?;
-                                self.log_to_terminal(Some(
-                                    event.to_string().as_str().with(Color::Green),
-                                ))?;
+                                self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
                             } else {
                                 tracing::debug!("Attempting to step into the future");
                                 match grid_event_rx.try_recv() {
@@ -283,7 +334,7 @@ impl Renderer {
                                         // Add event to history
                                         self.history.add_event(event);
                                         self.log_to_terminal(Some(
-                                            event.to_string().as_str().with(Color::Green),
+                                            event.to_string().with(Color::Green),
                                         ))?;
                                     }
                                     Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -291,6 +342,7 @@ impl Renderer {
                                         tracing::debug!("No future event available at the moment");
                                         self.log_to_terminal(Some(
                                             "No future event available at the moment"
+                                                .to_string()
                                                 .with(Color::Yellow),
                                         ))?;
                                     }
@@ -300,7 +352,7 @@ impl Renderer {
                                         // And the main render loop will eventually exit when it detects the disconnection
                                         tracing::debug!("Grid event channel disconnected");
                                         self.log_to_terminal(
-                                            Some("Grid event channel disconnected. Resume to exit the rendering".with(Color::Red)),
+                                            Some("Grid event channel disconnected. Resume to exit the rendering".to_string().with(Color::Red)),
                                         )?;
                                     }
                                 }
@@ -331,7 +383,7 @@ impl Renderer {
                                     // Move backward in history
                                     self.history.history_backward();
                                     self.log_to_terminal(Some(
-                                        revert_event.to_string().as_str().with(Color::Yellow),
+                                        revert_event.to_string().with(Color::Yellow),
                                     ))?;
                                 }
                             }
@@ -344,12 +396,9 @@ impl Renderer {
                                 self.render_refresh_time_scale.current()
                             );
                             self.log_to_terminal(Some(
-                                format!(
-                                    "Render refresh time: {:?}",
-                                    self.render_refresh_time_scale.current()
-                                )
-                                .as_str()
-                                .with(Color::Cyan),
+                                self.render_refresh_time_scale
+                                    .make_scale_bar(width)
+                                    .with(Color::Magenta),
                             ))?;
                         }
                         UserActionEvent::Resize => {
@@ -374,12 +423,9 @@ impl Renderer {
                                 self.render_refresh_time_scale.current()
                             );
                             self.log_to_terminal(Some(
-                                format!(
-                                    "Render refresh time: {:?}",
-                                    self.render_refresh_time_scale.current()
-                                )
-                                .as_str()
-                                .with(Color::Cyan),
+                                self.render_refresh_time_scale
+                                    .make_scale_bar(width)
+                                    .with(Color::Magenta),
                             ))?;
                         }
                     }
