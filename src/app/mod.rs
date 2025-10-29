@@ -195,9 +195,7 @@ impl App {
             style::PrintStyledContent(
                 "  ←/→: Step backward/forward when paused\r\n".with(Color::Cyan)
             ),
-            style::PrintStyledContent(
-                "  ↑/↓: Speed up/slow down animation when paused\r\n".with(Color::Cyan)
-            ),
+            style::PrintStyledContent("  ↑/↓: Speed up/slow down animation\r\n".with(Color::Cyan)),
             style::PrintStyledContent("  Esc: Exit\r\n\r\n".with(Color::Cyan)),
         )?;
 
