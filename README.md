@@ -74,14 +74,6 @@ cargo run
 - [x] **Pause/Resume** - Enter to pause/resume rendering
 - [x] **Navigation** - Left/Right arrow keys to traverse rendering history with on-screen logs
 - [x] **Speed Control** - Up/Down arrow keys to adjust rendering speed with on-screen indicator
-- **Restart** - 'R' key to restart the current generation
-- **Loop Toggle** - 'L' key to enable/disable indefinite rendering mode
-
-Apart from user experience reason, the reason I want to have the speed control feature is because different terminal emulators's rendering performance can have vary significantly. Based on my experience on my Macbook:
-
-- **WezTerm** & **Ghostty** & **Alacritty** - Excellent performance, no lag at max sizes
-- **Kitty** - Minor lag noticeable at max sizes
-- **macOS Terminal.app** & **Iterm** - Significant lag at max sizes
 
 ### Terminal Resize Handling (Planned)
 
@@ -93,3 +85,11 @@ Apart from user experience reason, the reason I want to have the speed control f
 - Additional maze generation algorithms
 - More pathfinding algorithms
 - Support for larger maze sizes (u16 dimensions: up to 65,535×65,535)?
+
+### Notes
+
+When using Mazest, different terminal emulators's rendering performance can have vary significantly for very large mazes. Based on my experience with my Macbook:
+
+- **WezTerm** & **Ghostty** & **Alacritty** - Excellent performance, no lag at max sizes
+- **Kitty** - Minor lag noticeable at max sizes
+- **macOS Terminal.app** & **Iterm** - Significant lag at max sizes
