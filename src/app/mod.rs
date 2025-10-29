@@ -309,9 +309,9 @@ impl App {
         }
 
         let msg = if goal_reached {
-            "Path found!\r\n"
+            "Path found! "
         } else {
-            "No path found.\r\n"
+            "No path found. "
         };
         stdout.execute(style::PrintStyledContent(
             msg.with(Color::Green).attribute(Attribute::Bold),
