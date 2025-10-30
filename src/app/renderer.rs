@@ -282,7 +282,7 @@ impl Renderer {
                                         );
                                         if !self.recover_grid_state()? {
                                             self.log_to_terminal(Some(
-                                                "Unable to recover grid state due to grid event short history. Please exit with Esc."
+                                                "Unable to recover grid state due to short grid event history. Please exit with Esc."
                                                     .to_string()
                                                     .with(Color::Red),
                                             ))?;
@@ -524,7 +524,7 @@ impl Renderer {
                                 if !self.recover_grid_state()? {
                                     self.history.history_forward(); // Move forward to restore position
                                     self.log_to_terminal(Some(
-                                        "Unable to revert due to grid event short history"
+                                        "Unable to revert due to short grid event history"
                                             .to_string()
                                             .with(Color::Red),
                                     ))?;

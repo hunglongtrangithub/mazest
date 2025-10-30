@@ -4,27 +4,28 @@ mod renderer;
 use std::{
     io::{Stdout, Write},
     sync::{
-        Arc,
         atomic::AtomicBool,
         mpsc::{Receiver, Sender},
+        Arc,
     },
     time::Duration,
 };
 
 use crossterm::{
-    ExecutableCommand, QueueableCommand, cursor,
+    cursor,
     event::{self, KeyCode},
     queue,
     style::{self, Attribute, Color, Stylize},
     terminal::{self, ClearType},
+    ExecutableCommand, QueueableCommand,
 };
 use rand::Rng;
 
 use crate::{
     app::renderer::{RenderRefreshTimeScale, Renderer, RendererStatus},
-    generators::{Generator, generate_maze},
-    maze::{Maze, cell::GridCell, grid::GridEvent},
-    solvers::{Solver, solve_maze},
+    generators::{generate_maze, Generator},
+    maze::{cell::GridCell, grid::GridEvent, Maze},
+    solvers::{solve_maze, Solver},
 };
 
 enum UserInputEvent {
@@ -55,9 +56,11 @@ enum UserActionEvent {
 pub struct App {
     /// Timeout for receiving input events, a.k.a. how often to check for render done/cancel flags
     input_recv_timeout: Duration,
-    /// Timeout for polling input events in the input thread, a.k.a. how often to check for render done/cancel flags
+    /// Timeout for polling input events in the input thread, a.k.a.
+    /// how often to check for render done/cancel flags
     user_input_event_poll_timeout: Duration,
-    /// maximum number of grid events to keep for history browsing when paused
+    /// maximum number of grid events to keep for history browsing when paused or grid state
+    /// recovery
     max_history_grid_events: usize,
 }
 
