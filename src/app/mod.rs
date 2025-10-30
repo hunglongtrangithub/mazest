@@ -4,28 +4,27 @@ mod renderer;
 use std::{
     io::{Stdout, Write},
     sync::{
+        Arc,
         atomic::AtomicBool,
         mpsc::{Receiver, Sender},
-        Arc,
     },
     time::Duration,
 };
 
 use crossterm::{
-    cursor,
+    ExecutableCommand, QueueableCommand, cursor,
     event::{self, KeyCode},
     queue,
     style::{self, Attribute, Color, Stylize},
     terminal::{self, ClearType},
-    ExecutableCommand, QueueableCommand,
 };
 use rand::Rng;
 
 use crate::{
     app::renderer::{RenderRefreshTimeScale, Renderer, RendererStatus},
-    generators::{generate_maze, Generator},
-    maze::{cell::GridCell, grid::GridEvent, Maze},
-    solvers::{solve_maze, Solver},
+    generators::{Generator, generate_maze},
+    maze::{Maze, cell::GridCell, grid::GridEvent},
+    solvers::{Solver, solve_maze},
 };
 
 enum UserInputEvent {
@@ -70,7 +69,7 @@ impl Default for App {
             // render_refresh_rate: Duration::from_micros(20),
             input_recv_timeout: Duration::from_millis(100),
             user_input_event_poll_timeout: Duration::from_millis(100),
-            max_history_grid_events: 1000,
+            max_history_grid_events: 10000,
         }
     }
 }
