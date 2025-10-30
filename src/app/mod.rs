@@ -253,6 +253,7 @@ impl App {
                     App::compute(width, height, grid_event_tx.clone(), generator, solver);
                 // Check if rendering was cancelled
                 if render_cancel_for_compute.load(std::sync::atomic::Ordering::Relaxed) {
+                    tracing::info!("Compute thread detected render cancel, exiting loop");
                     return goal_reached;
                 }
                 // Randomly select new generator and solver combination for next iteration
@@ -282,6 +283,7 @@ impl App {
             .expect("Render thread panicked")?;
 
         if let RendererStatus::Cancelled = completed {
+            tracing::info!("Rendering was cancelled by user.");
             return Ok(());
         }
 
@@ -397,9 +399,6 @@ impl App {
                                 // means Renderer::render has exited already
                                 user_action_event_tx.send(UserActionEvent::Cancel).ok();
                                 render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                // Close the channels to signal input thread and render thread to exit (if not already)
-                                drop(user_input_event_rx);
-                                drop(user_action_event_tx);
                                 break;
                             }
                             KeyCode::Enter => {
@@ -444,9 +443,12 @@ impl App {
                 }
             }
         }
+        // The user_input_event_rx and user_action_event_tx are dropped here
+        tracing::info!("Exiting main app loop");
     }
 
     /// Listen for user input events (key presses and resize)
+    /// This function runs in a separate thread, and is the only place where user input is read
     fn listen_to_user_input(
         user_input_event_tx: Sender<UserInputEvent>,
         event_poll_timeout: Duration,

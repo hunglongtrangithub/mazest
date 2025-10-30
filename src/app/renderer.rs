@@ -116,7 +116,7 @@ pub enum RendererStatus {
 pub struct Renderer {
     /// Standard output handle to write to the terminal
     stdout: Stdout,
-    /// Current grid dimensions (width, height)
+    /// Current grid dimensions (width, height). Updated by [`GridEvent::Initial`] events.
     grid_dims: Option<(u16, u16)>,
     /// History of grid events for browsing & recovery
     history: GridEventHistory,
@@ -143,6 +143,60 @@ impl Renderer {
         }
     }
 
+    /// Recover the grid state by replaying the history of grid events from the most recent initial event
+    /// to the current state.
+    /// This is used after terminal resize to redraw the grid correctly
+    /// Returns `Err` if there was an I/O error
+    fn recover_grid_state(&mut self) -> std::io::Result<()> {
+        match self.grid_dims {
+            Some((mut width, mut height)) => {
+                // Walk backward to the most recent initial event or beginning of history
+                let mut counter = 0; // Count number of events to replay
+                while let Some(event) = self.history.history_backward() {
+                    counter += 1;
+                    if let GridEvent::Initial {
+                        width: grid_width,
+                        height: grid_height,
+                        ..
+                    } = event
+                    {
+                        // Reached initial event, set grid dimensions and break
+                        self.grid_dims = Some((grid_width, grid_height));
+                        width = grid_width;
+                        height = grid_height;
+                        break;
+                    }
+                }
+                // NOTE: If no initial event found, we just use the last known dimensions
+                // At that point the history may have lost some update events, but we work with what we have
+
+                // Render the initial filled grid
+                self.stdout.queue(cursor::MoveTo(0, 0))?;
+                for _y in 0..height {
+                    for _x in 0..width {
+                        self.stdout.queue(style::Print(GridCell::WALL))?;
+                    }
+                    self.stdout.queue(style::Print("\r\n"))?;
+                }
+                // Walk forward through the history to re-apply all update events
+                for _ in 0..counter {
+                    let event = self.history.history_forward();
+                    if let Some(GridEvent::Update { coord, new, .. }) = event {
+                        // Move the cursor to the specified coordinate and print the new cell
+                        queue!(
+                            self.stdout,
+                            cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
+                            style::Print(new)
+                        )?;
+                    }
+                }
+                self.stdout.flush()?;
+            }
+            None => {} // No grid dimensions set, skip recovery
+        }
+        Ok(())
+    }
+
     /// Check if terminal size is sufficient for the current grid dimensions (if set)
     /// If not, display a message and wait for user to press Esc or resize the terminal.
     /// Returns:
@@ -159,6 +213,7 @@ impl Renderer {
                 if term_width < width * GridCell::CELL_WIDTH
                     || term_height.saturating_sub(Self::NUM_LOG_ROWS) < height
                 {
+                    tracing::info!("Terminal size too small for grid display, pausing rendering");
                     let msg = format!(
                         "Terminal size is too small ({}x{}) for the grid dimensions ({}x{}) to display.\r\n",
                         width * GridCell::CELL_WIDTH,
@@ -204,13 +259,10 @@ impl Renderer {
                                             >= height
                                     {
                                         // Terminal resized sufficiently, recover display
-                                        // TODO: Use the history to re-render the grid instead of clearing
-                                        queue!(
-                                            self.stdout,
-                                            terminal::Clear(ClearType::All),
-                                            cursor::MoveTo(0, 0),
-                                        )?;
-                                        self.stdout.flush()?;
+                                        tracing::info!(
+                                            "Terminal resized sufficiently, recovering grid display"
+                                        );
+                                        self.recover_grid_state()?;
                                         break;
                                     } else {
                                         // Still too small, continue waiting
@@ -368,7 +420,6 @@ impl Renderer {
                 tracing::debug!("Resuming rendering from pause");
                 // Step forward in the history and exit pause loop
                 while let Some(event) = self.history.history_forward() {
-                    tracing::debug!("Rendering history forward event for resume: {:?}", event);
                     if let RendererStatus::Cancelled =
                         self.render_grid_event(event, user_action_event_rx, false)?
                     {
@@ -429,29 +480,46 @@ impl Renderer {
             }
             UserActionEvent::Backward => {
                 // Get the current event
-                let event = self.history.current_event();
-                if let Some(event) = event {
+                if let Some(event) = self.history.current_event() {
                     // Craft the revert event
-                    let revert_event = match event {
-                        GridEvent::Initial { .. } => None, // Cannot revert initial event
-                        GridEvent::Update { coord, old, new } => Some(GridEvent::Update {
-                            coord,
-                            old: new,
-                            new: old,
-                        }),
-                    };
-                    // Render the revert event
-                    if let Some(revert_event) = revert_event {
-                        tracing::debug!("Rendering history backward event: {:?}", revert_event);
-                        if let RendererStatus::Cancelled =
-                            self.render_grid_event(revert_event, user_action_event_rx, false)?
-                        {
-                            return Ok(RendererStatus::Cancelled);
+                    match event {
+                        GridEvent::Initial { .. } => {
+                            if self.history.history_backward().is_none() {
+                                // Cannot go back further
+                                tracing::debug!("Already at the oldest event, cannot go backward");
+                                self.log_to_terminal(Some(
+                                    "Already at the oldest event, cannot go backward"
+                                        .to_string()
+                                        .with(Color::Yellow),
+                                ))?;
+                            } else {
+                                // Recover the grid state up to right before this initial event
+                                tracing::debug!(
+                                    "Reverting to state before initial event, recovering grid state"
+                                );
+                                self.recover_grid_state()?;
+                            }
                         }
-                        // Move backward in history
-                        self.history.history_backward();
-                        self.log_to_terminal(Some(revert_event.to_string().with(Color::Yellow)))?;
-                    }
+                        GridEvent::Update { coord, old, new } => {
+                            let revert_event = GridEvent::Update {
+                                coord,
+                                old: new,
+                                new: old,
+                            };
+
+                            tracing::debug!("Rendering history backward event: {:?}", revert_event);
+                            if let RendererStatus::Cancelled =
+                                self.render_grid_event(revert_event, user_action_event_rx, false)?
+                            {
+                                return Ok(RendererStatus::Cancelled);
+                            }
+                            // Move backward in history
+                            self.history.history_backward();
+                            self.log_to_terminal(Some(
+                                revert_event.to_string().with(Color::Yellow),
+                            ))?;
+                        }
+                    };
                 }
             }
             UserActionEvent::SpeedUp => {
@@ -543,6 +611,12 @@ impl Renderer {
         self.stdout.flush()?;
 
         loop {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                // Canceled by main thread, exit render loop
+                tracing::info!("Rendering cancelled by main thread");
+                return Ok(RendererStatus::Cancelled);
+            }
+
             // Try to receive user action events without blocking
             match user_action_event_rx.try_recv() {
                 Ok(action_event) => {
@@ -551,33 +625,40 @@ impl Renderer {
                         UserActionEvent::Pause => {
                             // Block and handle subsequent user action events
                             tracing::info!("Pausing rendering on user request");
-                            self.listen_to_user_action_events(
+                            if let RendererStatus::Cancelled = self.listen_to_user_action_events(
                                 &user_action_event_rx,
                                 &grid_event_rx,
-                            )?;
+                            )? {
+                                tracing::info!("Rendering cancelled during pause");
+                                return Ok(RendererStatus::Cancelled);
+                            }
                         }
                         UserActionEvent::SpeedUp
                         | UserActionEvent::SlowDown
-                        | UserActionEvent::Resize => {
+                        | UserActionEvent::Resize
+                        | UserActionEvent::Cancel => {
                             // Handle these events immediately
                             tracing::info!(
                                 "Handling user action event immediately: {:?}",
                                 action_event
                             );
-                            self.handle_user_action_event(
+                            if let RendererStatus::Cancelled = self.handle_user_action_event(
                                 &action_event,
                                 &user_action_event_rx,
                                 &grid_event_rx,
-                            )?;
+                            )? {
+                                tracing::info!("Rendering cancelled by user action");
+                                return Ok(RendererStatus::Cancelled);
+                            }
                         }
                         _ => {}
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // No action event, continue
+                    // No action event, continue to check grid events
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // Channel disconnected, ignore and continue
+                    // Channel disconnected, ignore and check grid events
                 }
             }
             // Block and wait for the next grid event
@@ -587,15 +668,11 @@ impl Renderer {
                     break;
                 }
                 Ok(event) => {
-                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        // Canceled by main thread, exit render loop
-                        return Ok(RendererStatus::Cancelled);
-                    }
-
                     // Render the grid event
                     if let RendererStatus::Cancelled =
                         self.render_grid_event(event, &user_action_event_rx, true)?
                     {
+                        tracing::info!("Rendering cancelled by user");
                         return Ok(RendererStatus::Cancelled);
                     }
 
