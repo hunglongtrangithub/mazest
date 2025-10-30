@@ -21,7 +21,7 @@ use crossterm::{
 use rand::Rng;
 
 use crate::{
-    app::renderer::{RenderRefreshTimeScale, Renderer},
+    app::renderer::{RenderRefreshTimeScale, Renderer, RendererStatus},
     generators::{Generator, generate_maze},
     maze::{Maze, cell::GridCell, grid::GridEvent},
     solvers::{Solver, solve_maze},
@@ -281,7 +281,7 @@ impl App {
             .join()
             .expect("Render thread panicked")?;
 
-        if !completed {
+        if let RendererStatus::Cancelled = completed {
             return Ok(());
         }
 
