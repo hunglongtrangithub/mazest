@@ -286,6 +286,7 @@ impl Renderer {
                                                     .to_string()
                                                     .with(Color::Red),
                                             ))?;
+                                            continue;
                                         }
                                         break;
                                     } else {
