@@ -146,29 +146,47 @@ impl Renderer {
     /// Recover the grid state by replaying the history of grid events from the most recent initial event
     /// to the current state.
     /// This is used after terminal resize to redraw the grid correctly
-    /// Returns `Err` if there was an I/O error
-    fn recover_grid_state(&mut self) -> std::io::Result<()> {
+    /// Returns:
+    /// - `Err` if there was an I/O error
+    /// - `Ok(true)` if recovery was performed
+    /// - `Ok(false)` if recovery was skipped due to missing initial event
+    fn recover_grid_state(&mut self) -> std::io::Result<bool> {
         match self.grid_dims {
             Some((mut width, mut height)) => {
                 // Walk backward to the most recent initial event or beginning of history
                 let mut counter = 0; // Count number of events to replay
-                while let Some(event) = self.history.history_backward() {
-                    counter += 1;
-                    if let GridEvent::Initial {
-                        width: grid_width,
-                        height: grid_height,
-                        ..
-                    } = event
-                    {
-                        // Reached initial event, set grid dimensions and break
-                        self.grid_dims = Some((grid_width, grid_height));
-                        width = grid_width;
-                        height = grid_height;
-                        break;
+                let found_initial_event = loop {
+                    if let Some(event) = self.history.history_backward() {
+                        counter += 1;
+                        if let GridEvent::Initial {
+                            width: grid_width,
+                            height: grid_height,
+                            ..
+                        } = event
+                        {
+                            // Reached initial event, set grid dimensions and break
+                            self.grid_dims = Some((grid_width, grid_height));
+                            width = grid_width;
+                            height = grid_height;
+                            break true;
+                        }
+                    } else {
+                        // No more events — exited normally
+                        break false;
                     }
+                };
+                // If no initial event found, the history may have lost some update events
+                // In this case, we just don't recover the grid state
+                if !found_initial_event {
+                    tracing::warn!(
+                        "No initial event found in history during recovery, skipping grid state recovery"
+                    );
+                    // Recover history position
+                    for _ in 0..counter {
+                        self.history.history_forward();
+                    }
+                    return Ok(false);
                 }
-                // NOTE: If no initial event found, we just use the last known dimensions
-                // At that point the history may have lost some update events, but we work with what we have
 
                 // Render the initial filled grid
                 self.stdout.queue(cursor::MoveTo(0, 0))?;
@@ -194,7 +212,7 @@ impl Renderer {
             }
             None => {} // No grid dimensions set, skip recovery
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Check if terminal size is sufficient for the current grid dimensions (if set)
@@ -262,7 +280,13 @@ impl Renderer {
                                         tracing::info!(
                                             "Terminal resized sufficiently, recovering grid display"
                                         );
-                                        self.recover_grid_state()?;
+                                        if !self.recover_grid_state()? {
+                                            self.log_to_terminal(Some(
+                                                "Unable to recover grid state due to grid event short history. Please exit with Esc."
+                                                    .to_string()
+                                                    .with(Color::Red),
+                                            ))?;
+                                        }
                                         break;
                                     } else {
                                         // Still too small, continue waiting
@@ -497,7 +521,20 @@ impl Renderer {
                                 tracing::debug!(
                                     "Reverting to state before initial event, recovering grid state"
                                 );
-                                self.recover_grid_state()?;
+                                if !self.recover_grid_state()? {
+                                    self.history.history_forward(); // Move forward to restore position
+                                    self.log_to_terminal(Some(
+                                        "Unable to revert due to grid event short history"
+                                            .to_string()
+                                            .with(Color::Red),
+                                    ))?;
+                                } else {
+                                    self.log_to_terminal(Some(
+                                        "Reverted to state before initial event"
+                                            .to_string()
+                                            .with(Color::Yellow),
+                                    ))?;
+                                }
                             }
                         }
                         GridEvent::Update { coord, old, new } => {
@@ -514,10 +551,18 @@ impl Renderer {
                                 return Ok(RendererStatus::Cancelled);
                             }
                             // Move backward in history
-                            self.history.history_backward();
-                            self.log_to_terminal(Some(
-                                revert_event.to_string().with(Color::Yellow),
-                            ))?;
+                            if self.history.history_backward().is_none() {
+                                // Cannot go back further
+                                self.log_to_terminal(Some(
+                                    "Already at the oldest event after revert"
+                                        .to_string()
+                                        .with(Color::Yellow),
+                                ))?;
+                            } else {
+                                self.log_to_terminal(Some(
+                                    revert_event.to_string().with(Color::Yellow),
+                                ))?;
+                            }
                         }
                     };
                 }
