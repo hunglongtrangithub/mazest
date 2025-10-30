@@ -111,7 +111,7 @@ pub struct Renderer {
     stdout: Stdout,
     /// Current grid dimensions (width, height)
     grid_dims: Option<(u16, u16)>,
-    /// History of grid events for browsing
+    /// History of grid events for browsing & recovery
     history: GridEventHistory,
     /// Render refresh time scale
     render_refresh_time_scale: RenderRefreshTimeScale,
@@ -228,14 +228,16 @@ impl Renderer {
     /// - If event is [`GridEvent::Initial`], it will update the grid dimensions and render the initial grid.
     /// - If event is [`GridEvent::Update`], it will update the specified cell in the grid only if grid dimensions are set.
     ///
+    /// If `save_to_history` is true, the event will be added to the history after successful rendering.
     /// Returns:
     /// - Ok(true) if rendering completed successfully
-    /// - Ok(false) if rendering was cancelled
+    /// - Ok(false) if rendering was cancelled. Event will not be rendered or added to history.
     /// - Err if there was an I/O error
     fn render_grid_event(
         &mut self,
-        event: &GridEvent,
+        event: GridEvent,
         user_action_event_rx: &Receiver<UserActionEvent>,
+        save_to_history: bool,
     ) -> std::io::Result<bool> {
         // Render the event
         match event {
@@ -244,8 +246,6 @@ impl Renderer {
                 width,
                 height,
             } => {
-                let width = *width;
-                let height = *height;
                 self.grid_dims = Some((width, height));
 
                 if !self.check_resize(user_action_event_rx)? {
@@ -282,6 +282,11 @@ impl Renderer {
                 // Skip if width and height are not set
                 None => {}
             },
+        }
+
+        if save_to_history {
+            // Add event to history
+            self.history.add_event(event);
         }
         Ok(true)
     }
@@ -355,9 +360,9 @@ impl Renderer {
                 self.log_to_terminal(None)?;
                 tracing::debug!("Resuming rendering from pause");
                 // Step forward in the history and exit pause loop
-                while let Some(event) = self.history.history_forward().copied() {
+                while let Some(event) = self.history.history_forward() {
                     tracing::debug!("Rendering history forward event for resume: {:?}", event);
-                    if !self.render_grid_event(&event, user_action_event_rx)? {
+                    if !self.render_grid_event(event, user_action_event_rx, false)? {
                         return Ok(false);
                     }
                     // Do we sleep here to simulate rendering time?
@@ -369,10 +374,10 @@ impl Renderer {
             }
             UserActionEvent::Forward => {
                 // Step forward and get the event
-                let event = self.history.history_forward().copied();
+                let event = self.history.history_forward();
                 if let Some(event) = event {
                     tracing::debug!("Rendering history forward event: {:?}", event);
-                    if !self.render_grid_event(&event, user_action_event_rx)? {
+                    if !self.render_grid_event(event, user_action_event_rx, false)? {
                         return Ok(false);
                     }
                     self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
@@ -381,11 +386,9 @@ impl Renderer {
                     match grid_event_rx.try_recv() {
                         Ok(event) => {
                             tracing::debug!("Rendering new future event: {:?}", event);
-                            if !self.render_grid_event(&event, user_action_event_rx)? {
+                            if !self.render_grid_event(event, user_action_event_rx, true)? {
                                 return Ok(false);
                             }
-                            // Add event to history
-                            self.history.add_event(event);
                             self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -413,7 +416,7 @@ impl Renderer {
             }
             UserActionEvent::Backward => {
                 // Get the current event
-                let event = self.history.current_event().copied();
+                let event = self.history.current_event();
                 if let Some(event) = event {
                     // Craft the revert event
                     let revert_event = match event {
@@ -427,7 +430,7 @@ impl Renderer {
                     // Render the revert event
                     if let Some(revert_event) = revert_event {
                         tracing::debug!("Rendering history backward event: {:?}", revert_event);
-                        if !self.render_grid_event(&revert_event, user_action_event_rx)? {
+                        if !self.render_grid_event(revert_event, user_action_event_rx, false)? {
                             return Ok(false);
                         }
                         // Move backward in history
@@ -579,12 +582,9 @@ impl Renderer {
                     }
 
                     // Render the grid event
-                    if !self.render_grid_event(&event, &user_action_event_rx)? {
+                    if !self.render_grid_event(event, &user_action_event_rx, true)? {
                         return Ok(false);
                     }
-
-                    // Add event to history
-                    self.history.add_event(event);
 
                     // Sleep a bit to simulate rendering time
                     std::thread::sleep(self.render_refresh_time_scale.current());

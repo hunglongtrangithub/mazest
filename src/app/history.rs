@@ -20,22 +20,22 @@ impl GridEventHistory {
         }
     }
 
-    pub fn history_forward(&mut self) -> Option<&GridEvent> {
+    pub fn history_forward(&mut self) -> Option<GridEvent> {
         match self.history_index {
             0 => None, // Already at the most recent event
             _ => {
                 self.history_index -= 1;
-                self.event_history.get(self.history_index)
+                self.event_history.get(self.history_index).copied()
             }
         }
     }
 
-    pub fn history_backward(&mut self) -> Option<&GridEvent> {
+    pub fn history_backward(&mut self) -> Option<GridEvent> {
         if self.history_index + 1 >= self.event_history.len() {
             None
         } else {
             self.history_index += 1;
-            self.event_history.get(self.history_index)
+            self.event_history.get(self.history_index).copied()
         }
     }
 
@@ -53,7 +53,7 @@ impl GridEventHistory {
         }
     }
 
-    pub fn current_event(&self) -> Option<&GridEvent> {
-        self.event_history.get(self.history_index)
+    pub fn current_event(&self) -> Option<GridEvent> {
+        self.event_history.get(self.history_index).copied()
     }
 }
