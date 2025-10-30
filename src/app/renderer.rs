@@ -1,6 +1,6 @@
 use std::{
     io::{Stdout, Write},
-    sync::{Condvar, Mutex, atomic::AtomicBool, mpsc::Receiver},
+    sync::{atomic::AtomicBool, mpsc::Receiver},
     time::Duration,
 };
 
@@ -80,7 +80,7 @@ impl RenderRefreshTimeScale {
             .collect::<String>()
     }
 
-    /// Get the current duration based on the square of (level+1).
+    /// Get the current duration based on the square of the level
     /// Level levels-1 -> delta * 1^2 (fastest), level 0 -> delta * levels^2 (slowest)
     pub fn current(&self) -> Duration {
         let factor = ((self.levels - self.level) as u32).saturating_add(1);
@@ -118,6 +118,9 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Number of log rows reserved at the bottom of the terminal
+    pub const NUM_LOG_ROWS: u16 = 1;
+
     /// Create a new Renderer instance
     /// `max_history_grid_events` specifies the maximum number of grid events to keep in history
     /// `maze_dims` is an optional tuple of (width, height) to calibrate the render refresh time scale
@@ -133,66 +136,106 @@ impl Renderer {
         }
     }
 
-    /// Check if terminal size is sufficient for the given grid dimensions
-    /// If not, display a message and wait for user to press Esc, then return Ok(false)
-    /// Returns Ok(true) if terminal size is sufficient
-    /// Returns Err if there was an I/O error
+    /// Check if terminal size is sufficient for the current grid dimensions (if set)
+    /// If not, display a message and wait for user to press Esc or resize the terminal.
+    /// Returns:
+    /// - Ok(true) if terminal size is sufficient or grid dimensions are not set
+    /// - Ok(false) if rendering was cancelled
+    /// - Err if there was an I/O error
     fn check_resize(
-        stdout: &mut Stdout,
-        width: u16,
-        height: u16,
-        cancel_signal: (&Mutex<bool>, &Condvar),
+        &mut self,
+        user_action_event_rx: &Receiver<UserActionEvent>,
     ) -> std::io::Result<bool> {
-        let (term_width, term_height) = terminal::size()?;
-        if term_width < width * GridCell::CELL_WIDTH || term_height < height {
-            let msg = format!(
-                "Terminal size is too small ({}x{}) for the grid dimensions ({}x{}) to display. Please resize the terminal.\r\n",
-                width * GridCell::CELL_WIDTH,
-                height,
-                width,
-                height
-            );
-            queue!(
-                stdout,
-                terminal::Clear(ClearType::All),
-                cursor::MoveTo(0, 0),
-                style::PrintStyledContent(msg.with(Color::Yellow).attribute(Attribute::Bold)),
-                style::PrintStyledContent(
-                    "Press Esc to exit...\r\n"
-                        .with(Color::Blue)
-                        .attribute(Attribute::Bold)
-                )
-            )?;
-            stdout.flush()?;
+        match self.grid_dims {
+            Some((width, height)) => {
+                let (term_width, term_height) = terminal::size()?;
+                if term_width < width * GridCell::CELL_WIDTH
+                    || term_height.saturating_sub(Self::NUM_LOG_ROWS) < height
+                {
+                    let msg = format!(
+                        "Terminal size is too small ({}x{}) for the grid dimensions ({}x{}) to display.\r\n",
+                        width * GridCell::CELL_WIDTH,
+                        height,
+                        width,
+                        height
+                    );
+                    queue!(
+                        self.stdout,
+                        terminal::Clear(ClearType::All),
+                        cursor::MoveTo(0, 0),
+                        style::PrintStyledContent(
+                            msg.with(Color::Yellow).attribute(Attribute::Bold)
+                        ),
+                        style::PrintStyledContent(
+                            "Please resize the terminal, or press Esc to exit...\r\n"
+                                .with(Color::Blue)
+                                .attribute(Attribute::Bold)
+                        )
+                    )?;
+                    self.stdout.flush()?;
 
-            {
-                let (cancel_mutex, cancel_condvar) = cancel_signal;
-                // Wait for cancellation signal from input thread
-                let mut canceled_guard = match cancel_mutex.lock() {
-                    Ok(guard) => guard,
-                    Err(_) => return Ok(false), // Mutex poisoned, treat as cancelled
-                };
-                while !*canceled_guard {
-                    canceled_guard = match cancel_condvar.wait(canceled_guard) {
-                        Ok(guard) => guard,
-                        Err(_) => return Ok(false), // Mutex poisoned, treat as cancelled
-                    };
+                    // Listen for user action events to resume or cancel
+                    loop {
+                        match user_action_event_rx.recv() {
+                            Err(_e) => {
+                                // Main thread has disconnected, treat as cancelled
+                                tracing::info!("Rendering cancelled due to terminal resize");
+                                return Ok(false);
+                            }
+                            Ok(event) => match event {
+                                UserActionEvent::Cancel => {
+                                    tracing::info!(
+                                        "Rendering cancelled by user due to terminal resize"
+                                    );
+                                    return Ok(false);
+                                }
+                                UserActionEvent::Resize => {
+                                    // Check terminal size again
+                                    let (new_term_width, new_term_height) = terminal::size()?;
+                                    if new_term_width >= width * GridCell::CELL_WIDTH
+                                        && new_term_height.saturating_sub(Self::NUM_LOG_ROWS)
+                                            >= height
+                                    {
+                                        // Terminal resized sufficiently, recover display
+                                        // TODO: Use the history to re-render the grid instead of clearing
+                                        queue!(
+                                            self.stdout,
+                                            terminal::Clear(ClearType::All),
+                                            cursor::MoveTo(0, 0),
+                                        )?;
+                                        self.stdout.flush()?;
+                                        break;
+                                    } else {
+                                        // Still too small, continue waiting
+                                        continue;
+                                    }
+                                }
+                                _ => {
+                                    // Ignore other events
+                                    continue;
+                                }
+                            },
+                        }
+                    }
                 }
+                Ok(true)
             }
-            return Ok(false);
+            None => Ok(true), // No grid dimensions set, skip check
         }
-        Ok(true)
     }
 
     /// Render a single grid event to the terminal
-    /// Returns Ok(true) if rendering completed successfully
-    /// Returns Ok(false) if rendering was cancelled
-    /// Returns Err if there was an I/O error
-    /// `cancel_signal` is used to wait for cancellation signal from user input thread if terminal resize is needed
+    /// - If event is [`GridEvent::Initial`], it will update the grid dimensions and render the initial grid.
+    /// - If event is [`GridEvent::Update`], it will update the specified cell in the grid only if grid dimensions are set.
+    ///
+    /// Returns:
+    /// - Ok(true) if rendering completed successfully
+    /// - Ok(false) if rendering was cancelled
+    /// - Err if there was an I/O error
     fn render_grid_event(
         &mut self,
         event: &GridEvent,
-        cancel_signal: (&Mutex<bool>, &Condvar),
+        user_action_event_rx: &Receiver<UserActionEvent>,
     ) -> std::io::Result<bool> {
         // Render the event
         match event {
@@ -205,7 +248,7 @@ impl Renderer {
                 let height = *height;
                 self.grid_dims = Some((width, height));
 
-                if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
+                if !self.check_resize(user_action_event_rx)? {
                     return Ok(false);
                 }
 
@@ -223,8 +266,8 @@ impl Renderer {
                 old: _old,
                 new,
             } => match self.grid_dims {
-                Some((width, height)) => {
-                    if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
+                Some(_) => {
+                    if !self.check_resize(user_action_event_rx)? {
                         return Ok(false);
                     }
                     // Move the cursor to the specified coordinate and print the
@@ -297,14 +340,14 @@ impl Renderer {
     }
 
     /// Handle a single user action event in the paused state
-    /// Returns Ok(true) if rendering should break from pause (on Resume)
-    /// Returns Ok(false) otherwise
+    /// Returns Ok(true) if rendering was completed successfully
+    /// Returns Ok(false) if rendering was cancelled
     /// Returns Err if there was an I/O error
     fn handle_user_action_event(
         &mut self,
         event: &UserActionEvent,
+        user_action_event_rx: &Receiver<UserActionEvent>,
         grid_event_rx: &Receiver<GridEvent>,
-        cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<bool> {
         match event {
             UserActionEvent::Resume => {
@@ -314,8 +357,10 @@ impl Renderer {
                 // Step forward in the history and exit pause loop
                 while let Some(event) = self.history.history_forward().copied() {
                     tracing::debug!("Rendering history forward event for resume: {:?}", event);
-                    self.render_grid_event(&event, cancel_signal)?;
-                    // TODO: Do we sleep here to simulate rendering time?
+                    if !self.render_grid_event(&event, user_action_event_rx)? {
+                        return Ok(false);
+                    }
+                    // Do we sleep here to simulate rendering time?
                     std::thread::sleep(self.render_refresh_time_scale.current());
                 }
             }
@@ -327,14 +372,18 @@ impl Renderer {
                 let event = self.history.history_forward().copied();
                 if let Some(event) = event {
                     tracing::debug!("Rendering history forward event: {:?}", event);
-                    self.render_grid_event(&event, cancel_signal)?;
+                    if !self.render_grid_event(&event, user_action_event_rx)? {
+                        return Ok(false);
+                    }
                     self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
                 } else {
                     tracing::debug!("Attempting to step into the future");
                     match grid_event_rx.try_recv() {
                         Ok(event) => {
                             tracing::debug!("Rendering new future event: {:?}", event);
-                            self.render_grid_event(&event, cancel_signal)?;
+                            if !self.render_grid_event(&event, user_action_event_rx)? {
+                                return Ok(false);
+                            }
                             // Add event to history
                             self.history.add_event(event);
                             self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
@@ -378,7 +427,9 @@ impl Renderer {
                     // Render the revert event
                     if let Some(revert_event) = revert_event {
                         tracing::debug!("Rendering history backward event: {:?}", revert_event);
-                        self.render_grid_event(&revert_event, cancel_signal)?;
+                        if !self.render_grid_event(&revert_event, user_action_event_rx)? {
+                            return Ok(false);
+                        }
                         // Move backward in history
                         self.history.history_backward();
                         self.log_to_terminal(Some(revert_event.to_string().with(Color::Yellow)))?;
@@ -400,11 +451,9 @@ impl Renderer {
             }
             UserActionEvent::Resize => {
                 // Check terminal size against current grid dimensions
-                if let Some((width, height)) = self.grid_dims {
-                    if !Renderer::check_resize(&mut self.stdout, width, height, cancel_signal)? {
-                        // Rendering was cancelled, exit
-                        return Ok(false);
-                    }
+                if self.grid_dims.is_some() && !self.check_resize(user_action_event_rx)? {
+                    // Rendering was cancelled, exit
+                    return Ok(false);
                 }
             }
             UserActionEvent::SlowDown => {
@@ -420,6 +469,16 @@ impl Renderer {
                         .stylize(),
                 ))?;
             }
+            UserActionEvent::Cancel => {
+                // Clear any log messages
+                self.log_to_terminal(None)?;
+                tracing::info!("Rendering cancelled by user");
+                // // Signal cancellation to the main render loop
+                // let (cancel_mutex, cancel_condvar) = cancel_signal;
+                // let mut canceled_guard = cancel_mutex.lock().unwrap();
+                // *canceled_guard = true;
+                // cancel_condvar.notify_all();
+            }
         };
 
         // Only signal pause break on Resume event
@@ -432,17 +491,16 @@ impl Renderer {
         &mut self,
         user_action_event_rx: &Receiver<UserActionEvent>,
         grid_event_rx: &Receiver<GridEvent>,
-        cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<()> {
         // Pause rendering until Resume event is received
         loop {
             match user_action_event_rx.recv() {
                 Err(_e) => {
-                    // Channel disconnected, ignore and continue
+                    // Main thread has disconnected, exit pause loop
                     break;
                 }
                 Ok(event) => {
-                    if self.handle_user_action_event(&event, grid_event_rx, cancel_signal)? {
+                    if self.handle_user_action_event(&event, user_action_event_rx, grid_event_rx)? {
                         // Resume event received, exit pause loop
                         break;
                     } else {
@@ -456,16 +514,16 @@ impl Renderer {
     }
 
     /// Render loop that processes events from the user action and grid event channels
-    /// Returns Ok(true) if rendering completed successfully
-    /// Returns Ok(false) if rendering was cancelled
-    /// Returns Err if there was an I/O error
+    /// Returns:
+    /// - Ok(true) if rendering completed successfully
+    /// - Ok(false) if rendering was cancelled
+    /// - Err if there was an I/O error
     pub fn render(
         &mut self,
         grid_event_rx: Receiver<GridEvent>,
         user_action_event_rx: Receiver<UserActionEvent>,
         cancel: &AtomicBool,
         done: &AtomicBool,
-        cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<bool> {
         queue!(self.stdout, terminal::Clear(ClearType::All), cursor::Hide)?;
         self.stdout.flush()?;
@@ -482,7 +540,6 @@ impl Renderer {
                             self.listen_to_user_action_events(
                                 &user_action_event_rx,
                                 &grid_event_rx,
-                                cancel_signal,
                             )?;
                         }
                         UserActionEvent::SpeedUp
@@ -495,8 +552,8 @@ impl Renderer {
                             );
                             self.handle_user_action_event(
                                 &action_event,
+                                &user_action_event_rx,
                                 &grid_event_rx,
-                                cancel_signal,
                             )?;
                         }
                         _ => {}
@@ -512,18 +569,17 @@ impl Renderer {
             // Block and wait for the next grid event
             match grid_event_rx.recv() {
                 Err(_e) => {
-                    // Channel disconnected, exit the thread
+                    // Compute thread has finished sending events, exit render loop
                     break;
                 }
                 Ok(event) => {
                     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        // Canceled by main thread, exit render loop
                         return Ok(false);
                     }
 
                     // Render the grid event
-                    if !self.render_grid_event(&event, cancel_signal)? {
-                        // Rendering was cancelled, set cancel flag and exit
-                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                    if !self.render_grid_event(&event, &user_action_event_rx)? {
                         return Ok(false);
                     }
 

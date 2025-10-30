@@ -4,7 +4,7 @@ mod renderer;
 use std::{
     io::{Stdout, Write},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc,
         atomic::AtomicBool,
         mpsc::{Receiver, Sender},
     },
@@ -48,6 +48,8 @@ enum UserActionEvent {
     SpeedUp,
     /// Decrease animation speed
     SlowDown,
+    /// Cancel rendering
+    Cancel,
 }
 
 pub struct App {
@@ -71,8 +73,6 @@ impl Default for App {
 }
 
 impl App {
-    /// Number of log rows reserved at the bottom of the terminal
-    const NUM_LOG_ROWS: u16 = 1;
     /// Maximum number of grid events to buffer in the channel between compute and render threads
     const MAX_EVENTS_IN_CHANNEL_BUFFER: usize = 1000;
     /// Available maze generators
@@ -123,28 +123,13 @@ impl App {
 
     /// Main application loop
     pub fn run(&self, stdout: &mut Stdout) -> std::io::Result<()> {
-        // Ask user for grid dimensions
+        // Ask user for maze dimensions
         let (width, height) = match App::ask_maze_dimensions(stdout)? {
             Some(dims) => dims,
             None => {
                 return Ok(());
             }
         };
-
-        // Check if terminal height and width are sufficient
-        let (term_width, term_height) = terminal::size()?;
-        if term_width < width as u16 * GridCell::CELL_WIDTH || term_height < height as u16 {
-            queue!(stdout, style::PrintStyledContent(
-                "Terminal size is too small for the maze dimensions to display. Please resize the terminal.\r\n"
-                    .with(Color::Yellow)
-                    .attribute(Attribute::Bold)),
-                style::PrintStyledContent("Press Esc to exit...\r\n".with(Color::Blue).attribute(Attribute::Bold))
-            )?;
-            stdout.flush()?;
-            // Wait for user to press Esc
-            App::wait_for_esc()?;
-            return Ok(());
-        }
 
         // Ask user for maze generation algorithm
         let mut generator = match App::select_from_menu(
@@ -214,18 +199,14 @@ impl App {
 
         // Flag to indicate rendering is done. Set to true by the render thread when it finishes.
         let render_done = Arc::new(AtomicBool::new(false));
-        // Flag to indicate rendering should be cancelled. Set to true by the input thread on Esc key.
+        // Flag to indicate rendering should be cancelled. Set to true by the main thread on Esc key event.
         let render_cancel = Arc::new(AtomicBool::new(false));
-        // Cancellation signal (mutex + condvar) for render thread to wait on from input thread
-        // when terminal resize is insufficient
-        let cancel_signal = (Arc::new(Mutex::new(false)), Arc::new(Condvar::new()));
 
         let (user_input_event_tx, user_input_event_rx) =
             std::sync::mpsc::channel::<UserInputEvent>();
         let user_input_event_poll_timeout = self.user_input_event_poll_timeout;
         let render_done_for_input = render_done.clone();
         let render_cancel_for_input = render_cancel.clone();
-        let cancel_signal_for_input = cancel_signal.clone();
         // Spawn a thread to listen for user input
         let input_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
             App::listen_to_user_input(
@@ -233,7 +214,6 @@ impl App {
                 user_input_event_poll_timeout,
                 &render_done_for_input,
                 &render_cancel_for_input,
-                (&cancel_signal_for_input.0, &cancel_signal_for_input.1),
             )
         });
 
@@ -253,7 +233,6 @@ impl App {
                 user_action_event_rx,
                 &render_cancel_for_render,
                 &render_done_for_render,
-                (&cancel_signal.0, &cancel_signal.1),
             )
         });
 
@@ -388,16 +367,14 @@ impl App {
         // Flag to indicate if the animation is currently paused
         let mut is_paused = false;
         loop {
-            // Check if render is done, or canceled by input thread
-            if render_done.load(std::sync::atomic::Ordering::Relaxed)
-                || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
-            {
+            // Check if render is done
+            if render_done.load(std::sync::atomic::Ordering::Relaxed) {
                 // Drop the receiver to signal input thread to exit
                 drop(user_input_event_rx);
                 break;
             }
 
-            match user_input_event_rx.recv_timeout(self.input_recv_timeout) {
+            let event = match user_input_event_rx.recv_timeout(self.input_recv_timeout) {
                 Err(e) => {
                     match e {
                         std::sync::mpsc::RecvTimeoutError::Timeout => {
@@ -415,7 +392,10 @@ impl App {
                         match key_event.code {
                             // Exit on Esc key
                             KeyCode::Esc => {
-                                tracing::debug!("Esc key pressed, cancelling render");
+                                tracing::debug!("[app loop] Esc key pressed, notifying renderer");
+                                // Error only happens if user_input_event_rx is dropped, which
+                                // means Renderer::render has exited already
+                                user_action_event_tx.send(UserActionEvent::Cancel).ok();
                                 render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                                 // Close the channels to signal input thread and render thread to exit (if not already)
                                 drop(user_input_event_rx);
@@ -429,59 +409,39 @@ impl App {
                                 } else {
                                     UserActionEvent::Pause
                                 };
-                                tracing::debug!("Sending user action event: {:?}", event);
-                                if user_action_event_tx.send(event).is_ok() {
-                                    // Toggle pause state
-                                    is_paused = !is_paused;
-                                } else {
-                                    // Receiver has been dropped, exit the loop
-                                    break;
-                                }
+                                // Toggle pause state
+                                is_paused = !is_paused;
+                                Some(event)
                             }
                             KeyCode::Left if is_paused => {
                                 // Step backward when paused
-                                if user_action_event_tx
-                                    .send(UserActionEvent::Backward)
-                                    .is_err()
-                                {
-                                    // Receiver has been dropped, exit the loop
-                                    break;
-                                }
+                                Some(UserActionEvent::Backward)
                             }
                             KeyCode::Right if is_paused => {
                                 // Step forward when paused
-                                if user_action_event_tx.send(UserActionEvent::Forward).is_err() {
-                                    // Receiver has been dropped, exit the loop
-                                    break;
-                                }
+                                Some(UserActionEvent::Forward)
                             }
                             KeyCode::Up => {
                                 // Speed up animation
-                                if user_action_event_tx.send(UserActionEvent::SpeedUp).is_err() {
-                                    // Receiver has been dropped, exit the loop
-                                    break;
-                                }
+                                Some(UserActionEvent::SpeedUp)
                             }
                             KeyCode::Down => {
                                 // Slow down animation
-                                if user_action_event_tx
-                                    .send(UserActionEvent::SlowDown)
-                                    .is_err()
-                                {
-                                    // Receiver has been dropped, exit the loop
-                                    break;
-                                }
+                                Some(UserActionEvent::SlowDown)
                             }
-                            _ => {}
+                            _ => None, // Ignore other keys
                         }
                     }
-                    UserInputEvent::Resize => {
-                        if user_action_event_tx.send(UserActionEvent::Resize).is_err() {
-                            // Receiver has been dropped, exit the loop
-                            break;
-                        }
-                    }
+                    UserInputEvent::Resize => Some(UserActionEvent::Resize),
                 },
+            };
+
+            // Send the user action event to the render thread
+            if let Some(event) = event {
+                if user_action_event_tx.send(event).is_err() {
+                    // Render thread has exited
+                    break;
+                }
             }
         }
     }
@@ -492,7 +452,6 @@ impl App {
         event_poll_timeout: Duration,
         render_done: &AtomicBool,
         render_cancel: &AtomicBool,
-        cancel_signal: (&Mutex<bool>, &Condvar),
     ) -> std::io::Result<()> {
         loop {
             // Check if render is done or canceled
@@ -504,7 +463,7 @@ impl App {
 
             // Poll for events with a timeout
             if !event::poll(event_poll_timeout)? {
-                // No event available, continue loop to check render_done again
+                // No event available, continue loop to check flags again
                 continue;
             }
 
@@ -534,19 +493,7 @@ impl App {
             }
 
             if should_exit {
-                // Set cancel flag
-                render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-
-                let (cancel_mutex, cancel_condvar) = cancel_signal;
-                // Signal cancellation and exit the thread
-                {
-                    let mut cancelled = match cancel_mutex.lock() {
-                        Ok(guard) => guard,
-                        Err(_) => return Ok(()), // Mutex poisoned, exit thread
-                    };
-                    *cancelled = true;
-                    cancel_condvar.notify_all();
-                }
+                tracing::debug!("[input loop] Esc key pressed, exiting");
                 return Ok(());
             }
         }
@@ -703,7 +650,7 @@ Maximum acceptable values are based on current terminal size.\r\n"
                     App::get_max_maze_size(term_width, GridCell::CELL_WIDTH)
                 } else {
                     // Reserve rows for logs
-                    App::get_max_maze_size(term_height.saturating_sub(App::NUM_LOG_ROWS), 1)
+                    App::get_max_maze_size(term_height.saturating_sub(Renderer::NUM_LOG_ROWS), 1)
                 }
             } else {
                 // Fallback to max size if terminal size cannot be determined
