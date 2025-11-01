@@ -20,7 +20,7 @@ The interactive controls and terminal resize handling features:
 - [x] **Pause/Resume** - Enter to pause/resume rendering
 - [x] **Navigation** - Left/Right arrow keys to traverse rendering history with on-screen logs
 - [x] **Speed Control** - Up/Down arrow keys to adjust rendering speed with on-screen indicator
-- [x] ***Terminal Resize Handling** - Resume from last valid state when terminal size is restored
+- [x] **Terminal Resize Handling** - Resume from last valid state when terminal size is restored
 
 ## Implemented Algorithms
 
