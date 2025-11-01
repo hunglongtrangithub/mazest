@@ -4,7 +4,7 @@ A high-performance, responsive, concurrent maze generation and solving visualize
 
 ## Demo
 
-[![asciicast](https://asciinema.org/a/37n2GR48FxXtdM3w4afXky4Ku.svg)](https://asciinema.org/a/37n2GR48FxXtdM3w4afXky4Ku)
+[![asciicast](https://asciinema.org/a/753075.svg)](https://asciinema.org/a/753075)
 
 ## Key Features
 
