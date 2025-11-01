@@ -15,6 +15,13 @@ Mazest tries to be as responsive as possible, even with large maze sizes. Here a
 - **Event-driven design** with responsive user interaction
 - **Loop mode** - continuously generates and solves mazes with random algorithm combinations
 
+The interactive controls and terminal resize handling features:
+
+- [x] **Pause/Resume** - Enter to pause/resume rendering
+- [x] **Navigation** - Left/Right arrow keys to traverse rendering history with on-screen logs
+- [x] **Speed Control** - Up/Down arrow keys to adjust rendering speed with on-screen indicator
+- [x] ***Terminal Resize Handling** - Resume from last valid state when terminal size is restored
+
 ## Implemented Algorithms
 
 **Maze Generators:**
@@ -49,14 +56,7 @@ The architecture is **event-driven**, using channels and atomic bools to coordin
 
 The input thread polls terminal events for a 100ms timeout and checks the status in the atomic bools to terminate itself. `std::sync::mpsc::sync_channel` is used between compute thread and render thread to prevent the compute thread aggressively sending grid update events to render thread and blowing up the channel queue.
 
-## Upcoming Features
-
-The interactive controls and terminal resize handling features that I want are implemented:
-
-- [x] **Pause/Resume** - Enter to pause/resume rendering
-- [x] **Navigation** - Left/Right arrow keys to traverse rendering history with on-screen logs
-- [x] **Speed Control** - Up/Down arrow keys to adjust rendering speed with on-screen indicator
-- [x] ***Terminal Resize Handling** - Resume from last valid state when terminal size is restored
+## Features
 
 ## Future Enhancements
 
