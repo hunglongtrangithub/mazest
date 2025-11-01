@@ -8,7 +8,7 @@ A high-performance, responsive, concurrent maze generation and solving visualize
 
 ## Key Features
 
-Mazest tries to be as responsive as possible, even with large maze sizes. Here are its key features:
+Mazest is extremely responsive even with large maze sizes. Here are its key features:
 
 - **Real-time visualization** of maze generation and pathfinding algorithms
 - **Concurrent architecture** with separate threads for smooth performance
