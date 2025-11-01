@@ -6,16 +6,14 @@ A high-performance, responsive, concurrent maze generation and solving visualize
 
 [![asciicast](https://asciinema.org/a/37n2GR48FxXtdM3w4afXky4Ku.svg)](https://asciinema.org/a/37n2GR48FxXtdM3w4afXky4Ku)
 
-## Features
-
-### Core Functionality
+## Key Features
 
 - **Real-time visualization** of maze generation and pathfinding algorithms
 - **Concurrent architecture** with separate compute and render threads for smooth performance
 - **Event-driven design** with responsive cancellation and cleanup
 - **Loop mode** - continuously generates and solves mazes with random algorithm combinations
 
-### Implemented Algorithms
+## Implemented Algorithms
 
 **Maze Generators:**
 
@@ -31,15 +29,7 @@ A high-performance, responsive, concurrent maze generation and solving visualize
 - Dijkstra's Algorithm
 - A\* (A-Star) Search
 
-### Current Controls
-
-- **Escape (Esc)** - Cancel generation/solving at any time
-- **Loop mode** - Run continuous random algorithm combinations
-
-### Maze Dimensions
-
-- Supports maze sizes up to **255 by 255** (grid sizes up to **511 by 511**)
-- Sizing based on terminal dimensions by default or manual user input
+For maze dimensions, currently supports maze sizes up to **255 by 255** (grid sizes up to **511 by 511**). Sizing is based on terminal dimensions by default or manual user input
 
 ## Usage
 
@@ -49,44 +39,30 @@ cargo run
 
 ## Technical Details
 
-### Architecture
+The architecture is **event-driven**, using channels and atomic bools to coordinate termination of threads and communication among threads. There are four main threads:
+1. Input thread: listens to terminal events and forward certain events to the main thread
+2. Main thread: spawns other threads, and runs the main app loop logic
+3. Render thread: listens to user action events and grid update events to render grid animation to the screen, and handles grid display on terminal resizing
+4. Compute thread: produces grid update events with a combination of maze generator and solver
 
-- **Event-driven design**
-- Only uses `crossterm` for terminal I/O
-- **Multi-threaded execution:**
-  - Main thread: handles user input events and orchestration
-  - Compute thread: runs maze generation and solving algorithms
-  - Render thread: processes and displays grid events
-  - User input thread: listens to terminal events and send to main thread
-- **Atomic flags** for thread synchronization and cancellation
-- **Channel-based communication** between threads
-- **Buffered rendering** to render grid events to stdout in batches for better performance
-
-### Performance Optimizations
-
-- `std::sync::mpsc::sync_channel` is used between compute thread and render thread to regulate the compute thread aggressively sending grid events to render thread
-- Non-blocking user input polling for responsiveness
+The input thread polls terminal events for a 100ms timeout and checks the status in the atomic bools to terminate itself. `std::sync::mpsc::sync_channel` is used between compute thread and render thread to prevent the compute thread aggressively sending grid update events to render thread and blowing up the channel queue.
 
 ## Upcoming Features
 
-### Interactive Controls (Planned)
+The interactive controls and terminal resize handling features that I want are implemented:
 
 - [x] **Pause/Resume** - Enter to pause/resume rendering
 - [x] **Navigation** - Left/Right arrow keys to traverse rendering history with on-screen logs
 - [x] **Speed Control** - Up/Down arrow keys to adjust rendering speed with on-screen indicator
+- [x] ***Terminal Resize Handling** - Resume from last valid state when terminal size is restored
 
-### Terminal Resize Handling (Planned)
-
-- Resume from last valid state when terminal size is restored
-- Maybe start a new run when terminal size is too small for current maze size?
-
-### Future Enhancements
+## Future Enhancements
 
 - Additional maze generation algorithms
 - More pathfinding algorithms
 - Support for larger maze sizes (u16 dimensions: up to 65,535×65,535)?
 
-### Notes
+## Terminal Emulator Rendering Experience
 
 When using Mazest, different terminal emulators's rendering performance can have vary significantly for very large mazes. Based on my experience with my Macbook:
 
