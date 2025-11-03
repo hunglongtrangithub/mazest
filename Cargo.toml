@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 default-run = "mazest"
 repository = "https://github.com/hunglongtrangithub/mazest.git"
+homepage = "https://github.com/hunglongtrangithub/mazest.git"
+description = "A responsive maze generation and solving visualizer for the terminal, written in Rust."
+
 
 [profile.release]
 debug = true
