@@ -3,9 +3,15 @@ name = "mazest"
 version = "0.1.0"
 edition = "2024"
 default-run = "mazest"
+repository = "https://github.com/hunglongtrangithub/mazest.git"
 
 [profile.release]
 debug = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [dependencies]
 rand = "0.9.2"
