@@ -438,11 +438,11 @@ impl App {
             };
 
             // Send the user action event to the render thread
-            if let Some(event) = event {
-                if user_action_event_tx.send(event).is_err() {
-                    // Render thread has exited
-                    break;
-                }
+            if let Some(event) = event
+                && user_action_event_tx.send(event).is_err()
+            {
+                // Render thread has exited
+                break;
             }
         }
         // The user_input_event_rx and user_action_event_tx are dropped here
@@ -525,10 +525,11 @@ impl App {
     /// This function blocks until Esc is pressed
     fn wait_for_esc() -> std::io::Result<()> {
         loop {
-            if let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? {
-                if code == KeyCode::Esc && kind == event::KeyEventKind::Press {
-                    break;
-                }
+            let event::Event::Key(event::KeyEvent { code, kind, .. }) = event::read()? else {
+                continue;
+            };
+            if code == KeyCode::Esc && kind == event::KeyEventKind::Press {
+                break;
             }
         }
         Ok(())
@@ -630,7 +631,14 @@ impl App {
     /// Ensures the size is odd and at least 3
     fn get_max_maze_size(term_size: u16, cell_size: u16) -> u8 {
         // Get default grid dimension based on terminal size. Make sure they are odd and at least 3.
-        let odd_and_min_3 = |n: u16| if n % 2 == 0 && n > 0 { n - 1 } else { n }.max(3);
+        let odd_and_min_3 = |n: u16| {
+            if n.is_multiple_of(2) && n > 0 {
+                n - 1
+            } else {
+                n
+            }
+            .max(3)
+        };
         let max_grid_size = odd_and_min_3(term_size / cell_size);
 
         // Default maze dimensions are half the grid dimensions, capped at u8::MAX

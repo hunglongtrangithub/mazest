@@ -151,66 +151,63 @@ impl Renderer {
     /// - `Ok(true)` if recovery was performed
     /// - `Ok(false)` if recovery was skipped due to missing initial event
     fn recover_grid_state(&mut self) -> std::io::Result<bool> {
-        match self.grid_dims {
-            Some((mut width, mut height)) => {
-                // Walk backward to the most recent initial event or beginning of history
-                let mut counter = 0; // Count number of events to replay
-                let found_initial_event = loop {
-                    if let Some(event) = self.history.history_backward() {
-                        counter += 1;
-                        if let GridEvent::Initial {
-                            width: grid_width,
-                            height: grid_height,
-                            ..
-                        } = event
-                        {
-                            // Reached initial event, set grid dimensions and break
-                            self.grid_dims = Some((grid_width, grid_height));
-                            width = grid_width;
-                            height = grid_height;
-                            break true;
-                        }
-                    } else {
-                        // No more events — exited normally
-                        break false;
+        if let Some((mut width, mut height)) = self.grid_dims {
+            // Walk backward to the most recent initial event or beginning of history
+            let mut counter = 0; // Count number of events to replay
+            let found_initial_event = loop {
+                if let Some(event) = self.history.history_backward() {
+                    counter += 1;
+                    if let GridEvent::Initial {
+                        width: grid_width,
+                        height: grid_height,
+                        ..
+                    } = event
+                    {
+                        // Reached initial event, set grid dimensions and break
+                        self.grid_dims = Some((grid_width, grid_height));
+                        width = grid_width;
+                        height = grid_height;
+                        break true;
                     }
-                };
-                // If no initial event found, the history may have lost some update events
-                // In this case, we just don't recover the grid state
-                if !found_initial_event {
-                    tracing::warn!(
-                        "No initial event found in history during recovery, skipping grid state recovery"
-                    );
-                    // Recover history position
-                    for _ in 0..counter {
-                        self.history.history_forward();
-                    }
-                    return Ok(false);
+                } else {
+                    // No more events — exited normally
+                    break false;
                 }
-
-                // Render the initial filled grid
-                self.stdout.queue(cursor::MoveTo(0, 0))?;
-                for _y in 0..height {
-                    for _x in 0..width {
-                        self.stdout.queue(style::Print(GridCell::WALL))?;
-                    }
-                    self.stdout.queue(style::Print("\r\n"))?;
-                }
-                // Walk forward through the history to re-apply all update events
+            };
+            // If no initial event found, the history may have lost some update events
+            // In this case, we just don't recover the grid state
+            if !found_initial_event {
+                tracing::warn!(
+                    "No initial event found in history during recovery, skipping grid state recovery"
+                );
+                // Recover history position
                 for _ in 0..counter {
-                    let event = self.history.history_forward();
-                    if let Some(GridEvent::Update { coord, new, .. }) = event {
-                        // Move the cursor to the specified coordinate and print the new cell
-                        queue!(
-                            self.stdout,
-                            cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
-                            style::Print(new)
-                        )?;
-                    }
+                    self.history.history_forward();
                 }
-                self.stdout.flush()?;
+                return Ok(false);
             }
-            None => {} // No grid dimensions set, skip recovery
+
+            // Render the initial filled grid
+            self.stdout.queue(cursor::MoveTo(0, 0))?;
+            for _y in 0..height {
+                for _x in 0..width {
+                    self.stdout.queue(style::Print(GridCell::WALL))?;
+                }
+                self.stdout.queue(style::Print("\r\n"))?;
+            }
+            // Walk forward through the history to re-apply all update events
+            for _ in 0..counter {
+                let event = self.history.history_forward();
+                if let Some(GridEvent::Update { coord, new, .. }) = event {
+                    // Move the cursor to the specified coordinate and print the new cell
+                    queue!(
+                        self.stdout,
+                        cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
+                        style::Print(new)
+                    )?;
+                }
+            }
+            self.stdout.flush()?;
         }
         Ok(true)
     }
@@ -349,8 +346,8 @@ impl Renderer {
                 coord,
                 old: _old,
                 new,
-            } => match self.grid_dims {
-                Some(_) => {
+            } => {
+                if self.grid_dims.is_some() {
                     if let RendererStatus::Cancelled = self.check_resize(user_action_event_rx)? {
                         return Ok(RendererStatus::Cancelled);
                     }
@@ -363,9 +360,7 @@ impl Renderer {
                     )?;
                     self.stdout.flush()?;
                 }
-                // Skip if width and height are not set
-                None => {}
-            },
+            }
         }
 
         if save_to_history {
