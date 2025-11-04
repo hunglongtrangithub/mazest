@@ -299,7 +299,7 @@ impl App {
         ))?;
 
         stdout.execute(style::PrintStyledContent(
-            "Press Esc to exit...\r\n"
+            "Press Esc to exit...\r"
                 .with(Color::Blue)
                 .attribute(Attribute::Bold),
         ))?;

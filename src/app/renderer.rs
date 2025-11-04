@@ -706,6 +706,8 @@ impl Renderer {
             match grid_event_rx.recv() {
                 Err(_e) => {
                     // Compute thread has finished sending events, exit render loop
+                    // Clear logs first
+                    self.log_to_terminal(None)?;
                     break;
                 }
                 Ok(event) => {
@@ -724,7 +726,7 @@ impl Renderer {
         }
         // Move cursor below the maze after exiting
         if let Some((_, height)) = self.grid_dims {
-            queue!(self.stdout, cursor::MoveTo(0, height), cursor::Show,)?;
+            queue!(self.stdout, cursor::MoveTo(0, height))?;
             self.stdout.flush()?;
         }
         // Set done flag
