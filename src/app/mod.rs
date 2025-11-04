@@ -21,7 +21,7 @@ use crossterm::{
 use rand::Rng;
 
 use crate::{
-    app::renderer::{RenderRefreshTimeScale, Renderer, RendererStatus},
+    app::renderer::{Renderer, RendererStatus},
     generators::{Generator, generate_maze},
     maze::{Maze, cell::GridCell, grid::GridEvent},
     solvers::{Solver, solve_maze},
@@ -305,57 +305,6 @@ impl App {
         ))?;
         // Wait for user to press Esc
         App::wait_for_esc()?;
-        Ok(())
-    }
-
-    /// Profiling mode: run animations in the background without rendering to terminal
-    pub fn profile(
-        &self,
-        width: u8,
-        height: u8,
-        solver: Solver,
-        generator: Generator,
-        num_animation_iterations: Option<usize>,
-    ) -> std::io::Result<()> {
-        let (grid_event_tx, grid_event_rx) =
-            std::sync::mpsc::sync_channel::<GridEvent>(App::MAX_EVENTS_IN_CHANNEL_BUFFER);
-
-        // Spawn a thread to listen for grid updates and render the maze
-        let render_refresh_time = RenderRefreshTimeScale::calibrated(width, height).current();
-        let render_thread_handle = std::thread::spawn(move || {
-            loop {
-                match grid_event_rx.recv() {
-                    Err(_e) => {
-                        // Channel disconnected, exit the thread
-                        break;
-                    }
-                    Ok(_event) => {
-                        // For profiling mode, we just discard the event
-                        std::thread::sleep(render_refresh_time);
-                    }
-                }
-            }
-        });
-
-        let compute_thread_handle = std::thread::spawn(move || match num_animation_iterations {
-            Some(iterations) => {
-                for _ in 0..iterations {
-                    App::compute(width, height, grid_event_tx.clone(), generator, solver);
-                }
-            }
-            None => {
-                App::compute(width, height, grid_event_tx, generator, solver);
-            }
-        });
-
-        // Wait for compute thread to finish
-        compute_thread_handle
-            .join()
-            .expect("Compute thread panicked");
-
-        // Wait for render thread to finish
-        render_thread_handle.join().expect("Render thread panicked");
-
         Ok(())
     }
 
