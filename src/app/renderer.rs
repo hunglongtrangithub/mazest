@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io::{Stdout, Write},
     sync::{atomic::AtomicBool, mpsc::Receiver},
     time::Duration,
@@ -17,7 +18,7 @@ use crate::{
 };
 
 /// Struct to manage render refresh time scaling based on a quantized level scale
-pub struct RenderRefreshTimeScale {
+struct RenderRefreshTimeScale {
     delta: Duration,
     /// number of discrete levels (quantization). e.g. 10
     levels: usize,
@@ -39,7 +40,7 @@ impl Default for RenderRefreshTimeScale {
 
 impl RenderRefreshTimeScale {
     /// Create a calibrated RenderRefreshTimeScale based on the grid dimensions
-    pub fn calibrated(grid_width: u8, grid_height: u8) -> Self {
+    fn calibrated(grid_width: u8, grid_height: u8) -> Self {
         let mut scale = Self::default();
         // Map grid size to a sensible starting level.
         // Larger grids -> faster rendering (higher level index).
@@ -82,7 +83,7 @@ impl RenderRefreshTimeScale {
 
     /// Get the current duration based on the square of the level
     /// Level levels-1 -> delta * 1^2 (fastest), level 0 -> delta * levels^2 (slowest)
-    pub fn current(&self) -> Duration {
+    fn current(&self) -> Duration {
         let factor = ((self.levels - self.level) as u32).saturating_add(1);
         self.delta * factor * factor
     }
@@ -106,6 +107,73 @@ impl RenderRefreshTimeScale {
     }
 }
 
+/// Compact representation of the current grid state.
+/// Stores the initial fill cell and only the cells that differ from it.
+#[derive(Default)]
+struct GridState {
+    /// initial cell and grid dimensions (width, height)
+    initial: Option<(GridCell, u16, u16)>,
+    /// map of (x,y) -> cell for cells that differ from initial cell
+    changes: HashMap<(u16, u16), GridCell>,
+}
+
+impl GridState {
+    fn dims(&self) -> Option<(u16, u16)> {
+        self.initial.map(|(_, w, h)| (w, h))
+    }
+
+    /// Apply a GridEvent to the compact state. Safe to call for both [`GridEvent::Initial`]` and [`GridEvent::Update`].
+    /// If an [`GridEvent::Initial`] is received, it clears the changes map and sets the initial cell and dimensions.
+    /// If an [`GridEvent::Update`] is received, it updates the changes map accordingly. The `old` value is ignored.
+    fn add_event(&mut self, event: GridEvent) {
+        match event {
+            GridEvent::Initial {
+                cell,
+                width,
+                height,
+            } => {
+                self.initial = Some((cell, width, height));
+                self.changes.clear();
+            }
+            GridEvent::Update { coord, new, .. } => {
+                if let Some((initial, _, _)) = self.initial {
+                    if new == initial {
+                        self.changes.remove(&coord);
+                    } else {
+                        self.changes.insert(coord, new);
+                    }
+                }
+                // If no initial, ignore update
+            }
+        }
+    }
+
+    /// Render the compact state to the provided stdout. This draws the initial filled grid,
+    /// then overlays changed cells. Does nothing if initial not set.
+    fn recover(&self, stdout: &mut Stdout) -> std::io::Result<()> {
+        if let Some((initial, width, height)) = self.initial {
+            // Render initial filled grid
+            stdout.queue(cursor::MoveTo(0, 0))?;
+            for _y in 0..height {
+                for _x in 0..width {
+                    stdout.queue(style::Print(initial))?;
+                }
+                stdout.queue(style::Print("\r\n"))?;
+            }
+            // Overlay changed cells
+            for (&(x, y), &cell) in self.changes.iter() {
+                queue!(
+                    stdout,
+                    cursor::MoveTo(x * GridCell::CELL_WIDTH, y),
+                    style::Print(cell)
+                )?;
+            }
+            stdout.flush()?;
+        }
+        Ok(())
+    }
+}
+
 pub enum RendererStatus {
     /// Rendering completed successfully
     Completed,
@@ -116,10 +184,10 @@ pub enum RendererStatus {
 pub struct Renderer {
     /// Standard output handle to write to the terminal
     stdout: Stdout,
-    /// Current grid dimensions (width, height). Updated by [`GridEvent::Initial`] events.
-    grid_dims: Option<(u16, u16)>,
     /// History of grid events for browsing & recovery
     history: GridEventHistory,
+    /// Compact current grid state (initial cell + diffs)
+    grid_state: GridState,
     /// Render refresh time scale
     render_refresh_time_scale: RenderRefreshTimeScale,
 }
@@ -134,8 +202,8 @@ impl Renderer {
     pub fn new(max_history_grid_events: usize, maze_dims: Option<(u8, u8)>) -> Self {
         Self {
             stdout: std::io::stdout(),
-            grid_dims: None,
             history: GridEventHistory::new(max_history_grid_events),
+            grid_state: GridState::default(),
             render_refresh_time_scale: match maze_dims {
                 Some((width, height)) => RenderRefreshTimeScale::calibrated(width, height),
                 None => RenderRefreshTimeScale::default(),
@@ -145,38 +213,29 @@ impl Renderer {
 
     /// Recover the grid state by replaying the history of grid events from the most recent initial event
     /// to the current state.
-    /// This is used after terminal resize to redraw the grid correctly
+    /// This is when the renderer needs to revert past an initial event.
     /// Returns:
     /// - `Err` if there was an I/O error
     /// - `Ok(true)` if recovery was performed
     /// - `Ok(false)` if recovery was skipped due to missing initial event
-    fn recover_grid_state(&mut self) -> std::io::Result<bool> {
-        if let Some((mut width, mut height)) = self.grid_dims {
-            // Walk backward to the most recent initial event or beginning of history
-            let mut counter = 0; // Count number of events to replay
-            let found_initial_event = loop {
-                if let Some(event) = self.history.history_backward() {
-                    counter += 1;
-                    if let GridEvent::Initial {
-                        width: grid_width,
-                        height: grid_height,
-                        ..
-                    } = event
-                    {
-                        // Reached initial event, set grid dimensions and break
-                        self.grid_dims = Some((grid_width, grid_height));
-                        width = grid_width;
-                        height = grid_height;
-                        break true;
-                    }
-                } else {
-                    // No more events — exited normally
-                    break false;
+    fn recover_from_history(&mut self) -> std::io::Result<bool> {
+        // Walk backward to the most recent initial event or beginning of history
+        let mut counter = 0; // Count number of events to replay
+        let (width, height, cell) = loop {
+            if let Some(event) = self.history.history_backward() {
+                counter += 1;
+                if let GridEvent::Initial {
+                    width,
+                    height,
+                    cell,
+                } = event
+                {
+                    // Reached initial event, set grid state and break
+                    self.grid_state.initial = Some((cell, width, height));
+                    break (width, height, cell);
                 }
-            };
-            // If no initial event found, the history may have lost some update events
-            // In this case, we just don't recover the grid state
-            if !found_initial_event {
+            } else {
+                // No more events — exited normally
                 tracing::warn!(
                     "No initial event found in history during recovery, skipping grid state recovery"
                 );
@@ -186,29 +245,36 @@ impl Renderer {
                 }
                 return Ok(false);
             }
+        };
 
-            // Render the initial filled grid
-            self.stdout.queue(cursor::MoveTo(0, 0))?;
-            for _y in 0..height {
-                for _x in 0..width {
-                    self.stdout.queue(style::Print(GridCell::WALL))?;
-                }
-                self.stdout.queue(style::Print("\r\n"))?;
+        // Render the initial filled grid
+        self.stdout.queue(cursor::MoveTo(0, 0))?;
+        for _y in 0..height {
+            for _x in 0..width {
+                self.stdout.queue(style::Print(cell))?;
             }
-            // Walk forward through the history to re-apply all update events
-            for _ in 0..counter {
-                let event = self.history.history_forward();
-                if let Some(GridEvent::Update { coord, new, .. }) = event {
-                    // Move the cursor to the specified coordinate and print the new cell
-                    queue!(
-                        self.stdout,
-                        cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
-                        style::Print(new)
-                    )?;
-                }
-            }
-            self.stdout.flush()?;
+            self.stdout.queue(style::Print("\r\n"))?;
         }
+        self.grid_state.add_event(GridEvent::Initial {
+            cell,
+            width,
+            height,
+        });
+        // Walk forward through the history to re-apply all update events
+        for _ in 0..counter {
+            let event = self.history.history_forward();
+            if let Some(GridEvent::Update { coord, old, new }) = event {
+                // Move the cursor to the specified coordinate and print the new cell
+                queue!(
+                    self.stdout,
+                    cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
+                    style::Print(new)
+                )?;
+                self.grid_state
+                    .add_event(GridEvent::Update { coord, old, new });
+            }
+        }
+        self.stdout.flush()?;
         Ok(true)
     }
 
@@ -222,7 +288,7 @@ impl Renderer {
         &mut self,
         user_action_event_rx: &Receiver<UserActionEvent>,
     ) -> std::io::Result<RendererStatus> {
-        match self.grid_dims {
+        match self.grid_state.dims() {
             Some((width, height)) => {
                 let (term_width, term_height) = terminal::size()?;
                 if term_width < width * GridCell::CELL_WIDTH
@@ -277,14 +343,7 @@ impl Renderer {
                                         tracing::info!(
                                             "Terminal resized sufficiently, recovering grid display"
                                         );
-                                        if !self.recover_grid_state()? {
-                                            self.log_to_terminal(Some(
-                                                "Unable to recover grid state due to short grid event history. Please exit with Esc."
-                                                    .to_string()
-                                                    .with(Color::Red),
-                                            ))?;
-                                            continue;
-                                        }
+                                        self.grid_state.recover(&mut self.stdout)?;
                                         break;
                                     } else {
                                         // Still too small, continue waiting
@@ -327,8 +386,6 @@ impl Renderer {
                 width,
                 height,
             } => {
-                self.grid_dims = Some((width, height));
-
                 if let RendererStatus::Cancelled = self.check_resize(user_action_event_rx)? {
                     return Ok(RendererStatus::Cancelled);
                 }
@@ -342,12 +399,8 @@ impl Renderer {
                 }
                 self.stdout.flush()?;
             }
-            GridEvent::Update {
-                coord,
-                old: _old,
-                new,
-            } => {
-                if self.grid_dims.is_some() {
+            GridEvent::Update { coord, new, .. } => {
+                if self.grid_state.dims().is_some() {
                     if let RendererStatus::Cancelled = self.check_resize(user_action_event_rx)? {
                         return Ok(RendererStatus::Cancelled);
                     }
@@ -363,6 +416,9 @@ impl Renderer {
             }
         }
 
+        // Always update compact grid state so recovery uses latest state
+        self.grid_state.add_event(event);
+
         if save_to_history {
             // Add event to history
             self.history.add_event(event);
@@ -370,9 +426,10 @@ impl Renderer {
         Ok(RendererStatus::Completed)
     }
 
+    /// Get the current grid width in terminal columns
     fn get_width(&self) -> std::io::Result<u16> {
         // Get grid width / terminal width for logging purposes
-        let width = match self.grid_dims {
+        let width = match self.grid_state.dims() {
             Some((w, _)) => w * GridCell::CELL_WIDTH,
             None => terminal::size()?.0,
         };
@@ -394,7 +451,7 @@ impl Renderer {
             // Move cursor to the log line (below the grid)
             cursor::MoveTo(
                 0,
-                match self.grid_dims {
+                match self.grid_state.dims() {
                     Some((_, height)) => height, // Move cursor right below the grid
                     None => 0, // Default to top line if grid dimensions not yet set
                 }
@@ -517,13 +574,14 @@ impl Renderer {
                                 tracing::debug!(
                                     "Reverting to state before initial event, recovering grid state"
                                 );
-                                if !self.recover_grid_state()? {
-                                    self.history.history_forward(); // Move forward to restore position
+                                if !self.recover_from_history()? {
+                                    // Recovery skipped due to missing initial event
                                     self.log_to_terminal(Some(
-                                        "Unable to revert due to short grid event history"
+                                        "No initial event found in history during revert, cannot go backward"
                                             .to_string()
-                                            .with(Color::Red),
+                                            .with(Color::Yellow),
                                     ))?;
+                                    self.history.history_forward(); // Move back to current position
                                 } else {
                                     self.log_to_terminal(Some(
                                         "Reverted to state before initial event"
@@ -534,18 +592,6 @@ impl Renderer {
                             }
                         }
                         GridEvent::Update { coord, old, new } => {
-                            let revert_event = GridEvent::Update {
-                                coord,
-                                old: new,
-                                new: old,
-                            };
-
-                            tracing::debug!("Rendering history backward event: {:?}", revert_event);
-                            if let RendererStatus::Cancelled =
-                                self.render_grid_event(revert_event, user_action_event_rx, false)?
-                            {
-                                return Ok(RendererStatus::Cancelled);
-                            }
                             // Move backward in history
                             if self.history.history_backward().is_none() {
                                 // Cannot go back further
@@ -555,6 +601,24 @@ impl Renderer {
                                         .with(Color::Yellow),
                                 ))?;
                             } else {
+                                // Only render the revert event when not at the oldest event
+                                let revert_event = GridEvent::Update {
+                                    coord,
+                                    old: new,
+                                    new: old,
+                                };
+
+                                tracing::debug!(
+                                    "Rendering history backward event: {:?}",
+                                    revert_event
+                                );
+                                if let RendererStatus::Cancelled = self.render_grid_event(
+                                    revert_event,
+                                    user_action_event_rx,
+                                    false,
+                                )? {
+                                    return Ok(RendererStatus::Cancelled);
+                                }
                                 self.log_to_terminal(Some(
                                     revert_event.to_string().with(Color::Yellow),
                                 ))?;
@@ -725,7 +789,7 @@ impl Renderer {
             }
         }
         // Move cursor below the maze after exiting
-        if let Some((_, height)) = self.grid_dims {
+        if let Some((_, height)) = self.grid_state.dims() {
             queue!(self.stdout, cursor::MoveTo(0, height))?;
             self.stdout.flush()?;
         }
