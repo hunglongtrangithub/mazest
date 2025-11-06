@@ -47,8 +47,8 @@ impl fmt::Display for GridCell {
         let styled_symbol = match self {
             GridCell::Path(path) => match path {
                 PathType::Path(orientation) => match orientation {
-                    Orientation::Horizontal => "══".with(Color::Yellow),
-                    Orientation::Vertical => "║ ".with(Color::Yellow),
+                    Orientation::Horizontal => "".with(Color::Yellow),
+                    Orientation::Vertical => " ".with(Color::Yellow),
                     // Orientation::Horizontal => "🟨".with(Color::Yellow),
                     // Orientation::Vertical => "🟨".with(Color::Yellow),
                 },
@@ -63,11 +63,14 @@ impl fmt::Display for GridCell {
                 WallType::Mark => "🟪".with(Color::Magenta),
             },
         };
+
+        #[cfg(debug_assertions)]
         assert_eq!(
             styled_symbol.content().width(),
             GridCell::CELL_WIDTH as usize,
             "Each cell must occupy exactly two character widths."
         );
+
         write!(f, "{}", styled_symbol)
     }
 }
