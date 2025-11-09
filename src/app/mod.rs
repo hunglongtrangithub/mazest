@@ -95,6 +95,7 @@ impl App {
         std::panic::set_hook(Box::new(move |panic_info| {
             let _ = App::restore_terminal(&mut std::io::stdout()); // ignore any errors as we are already failing
             hook(panic_info);
+            std::process::exit(1); // exit immediately after restoring terminal
         }));
     }
 
