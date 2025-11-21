@@ -1,6 +1,6 @@
 # Mazest
 
-A high-performance, responsive, concurrent maze generation and solving visualizer for the terminal, built with Rust.
+A responsive maze generation and solving visualizer for the terminal, built with Rust.
 
 ## Demo
 
