@@ -69,7 +69,7 @@ impl Default for App {
             // render_refresh_rate: Duration::from_micros(20),
             input_recv_timeout: Duration::from_millis(100),
             user_input_event_poll_timeout: Duration::from_millis(100),
-            max_history_grid_events: 10000,
+            max_history_grid_events: 100,
         }
     }
 }
@@ -503,7 +503,7 @@ impl App {
         let mut input = String::new();
 
         let number_option = loop {
-            // Re-render prompt line
+            // Re-render
             queue!(
                 stdout,
                 cursor::RestorePosition,

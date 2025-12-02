@@ -1,5 +1,4 @@
 use crossterm::style::{Color, Stylize};
-use unicode_width::UnicodeWidthStr;
 
 use std::fmt;
 
@@ -65,11 +64,14 @@ impl fmt::Display for GridCell {
         };
 
         #[cfg(debug_assertions)]
-        assert_eq!(
-            styled_symbol.content().width(),
-            GridCell::CELL_WIDTH as usize,
-            "Each cell must occupy exactly two character widths."
-        );
+        {
+            use unicode_width::UnicodeWidthStr;
+            assert_eq!(
+                styled_symbol.content().width(),
+                GridCell::CELL_WIDTH as usize,
+                "Each cell must occupy exactly two character widths."
+            );
+        }
 
         write!(f, "{}", styled_symbol)
     }
