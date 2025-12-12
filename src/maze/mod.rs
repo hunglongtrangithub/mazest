@@ -247,6 +247,11 @@ impl Maze {
             });
         });
     }
+
+    /// Expose the internal grid for read-only access.
+    pub fn grid(&self) -> &Grid {
+        &self.grid
+    }
 }
 
 impl std::ops::Index<(u8, u8)> for Maze {
