@@ -230,8 +230,7 @@ impl App {
         let render_cancel_for_render = render_cancel.clone();
         let render_done_for_render = render_done.clone();
         let render_thread_handle = std::thread::spawn(move || {
-            let mut renderer = Renderer::new(max_history_grid_events, Some((width, height)));
-            renderer.render(
+            Renderer::new(max_history_grid_events, Some((width, height))).render(
                 grid_event_rx,
                 user_action_event_rx,
                 &render_cancel_for_render,

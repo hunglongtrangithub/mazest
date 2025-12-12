@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{Stdout, Write},
+    io::{StdoutLock, Write},
     sync::{atomic::AtomicBool, mpsc::Receiver},
     time::Duration,
 };
@@ -150,7 +150,7 @@ impl GridState {
 
     /// Render the compact state to the provided stdout. This draws the initial filled grid,
     /// then overlays changed cells. Does nothing if initial not set.
-    fn recover(&self, stdout: &mut Stdout) -> std::io::Result<()> {
+    fn recover(&self, stdout: &mut StdoutLock) -> std::io::Result<()> {
         if let Some((initial, width, height)) = self.initial {
             // Render initial filled grid
             stdout.queue(cursor::MoveTo(0, 0))?;
@@ -181,9 +181,11 @@ pub enum RendererStatus {
     Cancelled,
 }
 
-pub struct Renderer {
-    /// Standard output handle to write to the terminal
-    stdout: Stdout,
+pub struct Renderer<'a> {
+    /// Standard output handle to write to the terminal.
+    /// Locked for exclusive access during rendering.
+    /// This lock is held for the lifetime of the Renderer instance.
+    stdout: StdoutLock<'a>,
     /// History of grid events for browsing & recovery
     history: GridEventHistory,
     /// Compact current grid state (initial cell + diffs)
@@ -192,7 +194,7 @@ pub struct Renderer {
     render_refresh_time_scale: RenderRefreshTimeScale,
 }
 
-impl Renderer {
+impl<'a> Renderer<'a> {
     /// Number of log rows reserved at the bottom of the terminal
     pub const NUM_LOG_ROWS: u16 = 1;
 
@@ -201,7 +203,7 @@ impl Renderer {
     /// `maze_dims` is an optional tuple of (width, height) to calibrate the render refresh time scale
     pub fn new(max_history_grid_events: usize, maze_dims: Option<(u8, u8)>) -> Self {
         Self {
-            stdout: std::io::stdout(),
+            stdout: std::io::stdout().lock(),
             history: GridEventHistory::new(max_history_grid_events),
             grid_state: GridState::default(),
             render_refresh_time_scale: match maze_dims {
