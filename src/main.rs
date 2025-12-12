@@ -15,12 +15,6 @@ fn main() -> std::io::Result<()> {
         tracing::info!("Logging initialized.");
         guard
     };
-
-    // Set up terminal and run the application
-    let mut stdout = std::io::stdout();
-    App::setup_terminal(&mut stdout)?;
-    let app = App::default();
-    let res = app.run(&mut stdout);
-    App::restore_terminal(&mut stdout)?;
-    res
+    let mut app = App::default();
+    app.run()
 }

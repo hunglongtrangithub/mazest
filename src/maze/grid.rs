@@ -1,4 +1,5 @@
 use super::cell::GridCell;
+use crossterm::style::{ContentStyle, StyledContent, Stylize};
 
 pub struct Grid {
     data: Box<[GridCell]>,
@@ -19,6 +20,14 @@ pub enum GridEvent {
         old: GridCell,
         new: GridCell,
     },
+}
+
+impl Stylize for GridEvent {
+    type Styled = StyledContent<String>;
+
+    fn stylize(self) -> Self::Styled {
+        StyledContent::new(ContentStyle::default(), format!("{:?}", self))
+    }
 }
 
 impl std::fmt::Display for GridEvent {

@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Display,
     io::{StdoutLock, Write},
     sync::{atomic::AtomicBool, mpsc::Receiver},
     time::Duration,
@@ -7,13 +8,12 @@ use std::{
 
 use crossterm::{
     QueueableCommand, cursor, queue,
-    style::{self, Attribute, Color, Stylize},
+    style::{self, Attribute, Color, StyledContent, Stylize},
     terminal::{self, ClearType},
 };
-use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{UserActionEvent, history::GridEventHistory},
+    app::{self, visualize::UserActionEvent, visualize::history::GridEventHistory},
     maze::{cell::GridCell, grid::GridEvent},
 };
 
@@ -181,6 +181,7 @@ pub enum RendererStatus {
     Cancelled,
 }
 
+/// Renderer to manage terminal rendering of grid events from the [`crate::app::visualize`] module.
 pub struct Renderer<'a> {
     /// Standard output handle to write to the terminal.
     /// Locked for exclusive access during rendering.
@@ -195,9 +196,6 @@ pub struct Renderer<'a> {
 }
 
 impl<'a> Renderer<'a> {
-    /// Number of log rows reserved at the bottom of the terminal
-    pub const NUM_LOG_ROWS: u16 = 1;
-
     /// Create a new Renderer instance
     /// `max_history_grid_events` specifies the maximum number of grid events to keep in history
     /// `maze_dims` is an optional tuple of (width, height) to calibrate the render refresh time scale
@@ -294,7 +292,7 @@ impl<'a> Renderer<'a> {
             Some((width, height)) => {
                 let (term_width, term_height) = terminal::size()?;
                 if term_width < width * GridCell::CELL_WIDTH
-                    || term_height.saturating_sub(Self::NUM_LOG_ROWS) < height
+                    || term_height.saturating_sub(app::NUM_STATUS_ROWS) < height
                 {
                     tracing::info!("Terminal size too small for grid display, pausing rendering");
                     let msg = format!(
@@ -338,7 +336,7 @@ impl<'a> Renderer<'a> {
                                     // Check terminal size again
                                     let (new_term_width, new_term_height) = terminal::size()?;
                                     if new_term_width >= width * GridCell::CELL_WIDTH
-                                        && new_term_height.saturating_sub(Self::NUM_LOG_ROWS)
+                                        && new_term_height.saturating_sub(app::NUM_STATUS_ROWS)
                                             >= height
                                     {
                                         // Terminal resized sufficiently, recover display
@@ -438,48 +436,27 @@ impl<'a> Renderer<'a> {
         Ok(width)
     }
 
-    /// Log a message to the terminal below the grid without disrupting the grid display
-    /// The cursor position is saved and restored after logging
-    /// Returns `Err` if there was an I/O error
-    /// If msg is None, clears the log line
+    fn clear_terminal_log(&mut self) -> std::io::Result<()> {
+        let grid_height = match self.grid_state.dims() {
+            // Move cursor right below the grid
+            Some((_, height)) => height,
+            // Default to top line if grid dimensions not yet set
+            None => 0,
+        };
+        app::log_terminal(&mut self.stdout, grid_height, None::<StyledContent<&str>>)
+    }
+
     fn log_to_terminal(
         &mut self,
-        msg: Option<style::StyledContent<String>>,
+        msg: style::StyledContent<impl Display + AsRef<str>>,
     ) -> std::io::Result<()> {
-        queue!(
-            self.stdout,
-            // Save cursor position first
-            cursor::SavePosition,
-            // Move cursor to the log line (below the grid)
-            cursor::MoveTo(
-                0,
-                match self.grid_state.dims() {
-                    Some((_, height)) => height, // Move cursor right below the grid
-                    None => 0, // Default to top line if grid dimensions not yet set
-                }
-            ),
-            // Clear previous log line
-            terminal::Clear(ClearType::CurrentLine),
-            // Print the log message
-            style::PrintStyledContent(match msg {
-                Some(msg) => {
-                    let width = terminal::size()?.0 as usize;
-                    let content = msg.content();
-                    if content.width() > width {
-                        // Truncate message to fit terminal width
-                        let truncated = format!("{}...", &content[..width.saturating_sub(3)]);
-                        style::StyledContent::new(*msg.style(), truncated)
-                    } else {
-                        msg
-                    }
-                }
-                None => "".to_string().with(Color::Reset),
-            }),
-            // Go back to previous cursor position
-            cursor::RestorePosition,
-        )?;
-        self.stdout.flush()?;
-        Ok(())
+        let grid_height = match self.grid_state.dims() {
+            // Move cursor right below the grid
+            Some((_, height)) => height,
+            // Default to top line if grid dimensions not yet set
+            None => 0,
+        };
+        app::log_terminal(&mut self.stdout, grid_height, Some(msg))
     }
 
     /// Handle a single user action event in the paused state
@@ -495,7 +472,7 @@ impl<'a> Renderer<'a> {
         match event {
             UserActionEvent::Resume => {
                 // Clear any log messages
-                self.log_to_terminal(None)?;
+                self.clear_terminal_log()?;
                 tracing::debug!("Resuming rendering from pause");
                 // Step forward in the history and exit pause loop
                 while let Some(event) = self.history.history_forward() {
@@ -521,7 +498,7 @@ impl<'a> Renderer<'a> {
                     {
                         return Ok(RendererStatus::Cancelled);
                     }
-                    self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
+                    self.log_to_terminal(event.with(Color::Green))?;
                 } else {
                     tracing::debug!("Attempting to step into the future");
                     match grid_event_rx.try_recv() {
@@ -532,27 +509,24 @@ impl<'a> Renderer<'a> {
                             {
                                 return Ok(RendererStatus::Cancelled);
                             }
-                            self.log_to_terminal(Some(event.to_string().with(Color::Green)))?;
+                            self.log_to_terminal(event.with(Color::Green))?;
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => {
                             // No action event, continue
                             tracing::debug!("No future event available at the moment");
-                            self.log_to_terminal(Some(
-                                "No future event available at the moment"
-                                    .to_string()
-                                    .with(Color::Yellow),
-                            ))?;
+                            self.log_to_terminal(
+                                "No future event available at the moment".with(Color::Yellow),
+                            )?;
                         }
                         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                             // Channel disconnected, ignore and continue
                             // This loop will just wait for Resume to exit the pause state,
                             // And the main render loop will eventually exit when it detects the disconnection
                             tracing::debug!("Grid event channel disconnected");
-                            self.log_to_terminal(Some(
+                            self.log_to_terminal(
                                 "Grid event channel disconnected. Resume to exit the rendering"
-                                    .to_string()
                                     .with(Color::Red),
-                            ))?;
+                            )?;
                         }
                     };
                 }
@@ -566,11 +540,10 @@ impl<'a> Renderer<'a> {
                             if self.history.history_backward().is_none() {
                                 // Cannot go back further
                                 tracing::debug!("Already at the oldest event, cannot go backward");
-                                self.log_to_terminal(Some(
+                                self.log_to_terminal(
                                     "Already at the oldest event, cannot go backward"
-                                        .to_string()
                                         .with(Color::Yellow),
-                                ))?;
+                                )?;
                             } else {
                                 // Recover the grid state up to right before this initial event
                                 tracing::debug!(
@@ -578,18 +551,16 @@ impl<'a> Renderer<'a> {
                                 );
                                 if !self.recover_from_history()? {
                                     // Recovery skipped due to missing initial event
-                                    self.log_to_terminal(Some(
+                                    self.log_to_terminal(
                                         "No initial event found in history during revert, cannot go backward"
-                                            .to_string()
                                             .with(Color::Yellow),
-                                    ))?;
+                                    )?;
                                     self.history.history_forward(); // Move back to current position
                                 } else {
-                                    self.log_to_terminal(Some(
+                                    self.log_to_terminal(
                                         "Reverted to state before initial event"
-                                            .to_string()
                                             .with(Color::Yellow),
-                                    ))?;
+                                    )?;
                                 }
                             }
                         }
@@ -597,11 +568,9 @@ impl<'a> Renderer<'a> {
                             // Move backward in history
                             if self.history.history_backward().is_none() {
                                 // Cannot go back further
-                                self.log_to_terminal(Some(
-                                    "Already at the oldest event after revert"
-                                        .to_string()
-                                        .with(Color::Yellow),
-                                ))?;
+                                self.log_to_terminal(
+                                    "Already at the oldest event after revert".with(Color::Yellow),
+                                )?;
                             } else {
                                 // Only render the revert event when not at the oldest event
                                 let revert_event = GridEvent::Update {
@@ -621,9 +590,7 @@ impl<'a> Renderer<'a> {
                                 )? {
                                     return Ok(RendererStatus::Cancelled);
                                 }
-                                self.log_to_terminal(Some(
-                                    revert_event.to_string().with(Color::Yellow),
-                                ))?;
+                                self.log_to_terminal(revert_event.with(Color::Yellow))?;
                             }
                         }
                     };
@@ -636,11 +603,11 @@ impl<'a> Renderer<'a> {
                     "Increased rendering speed, new refresh time: {:?}",
                     self.render_refresh_time_scale.current()
                 );
-                self.log_to_terminal(Some(
+                self.log_to_terminal(
                     self.render_refresh_time_scale
                         .make_scale_bar(self.get_width()?)
                         .stylize(),
-                ))?;
+                )?;
             }
             UserActionEvent::Resize => {
                 // Check terminal size against current grid dimensions
@@ -656,15 +623,15 @@ impl<'a> Renderer<'a> {
                     "Decreased rendering speed, new refresh time: {:?}",
                     self.render_refresh_time_scale.current()
                 );
-                self.log_to_terminal(Some(
+                self.log_to_terminal(
                     self.render_refresh_time_scale
                         .make_scale_bar(self.get_width()?)
                         .stylize(),
-                ))?;
+                )?;
             }
             UserActionEvent::Cancel => {
                 // Clear any log messages
-                self.log_to_terminal(None)?;
+                self.clear_terminal_log()?;
                 tracing::info!("Rendering cancelled by user");
                 // Exit rendering loop
                 return Ok(RendererStatus::Cancelled);
@@ -773,7 +740,7 @@ impl<'a> Renderer<'a> {
                 Err(_e) => {
                     // Compute thread has finished sending events, exit render loop
                     // Clear logs first
-                    self.log_to_terminal(None)?;
+                    self.clear_terminal_log()?;
                     break;
                 }
                 Ok(event) => {
