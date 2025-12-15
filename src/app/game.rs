@@ -373,7 +373,7 @@ fn start_game(
                 stdout,
                 grid_height,
                 Some(
-                    "Congratulations! You reached the goal! Press Enter to continue., or Esc to exit."
+                    "Congratulations! You reached the goal! Press Enter to continue, or Esc to exit."
                         .with(Color::Green)
                         .attribute(Attribute::Bold),
                 ),
@@ -384,7 +384,7 @@ fn start_game(
                 stdout,
                 grid_height,
                 Some(
-                    "Time's up! You failed to reach the goal. Press Enter to continue. or Esc to exit."
+                    "Time's up! You failed to reach the goal. Press Enter to continue, or Esc to exit."
                         .with(Color::Red)
                         .attribute(Attribute::Bold),
                 ),
@@ -409,7 +409,6 @@ fn start_game(
                 }
                 _ => {}
             }
-            break;
         }
     }
     Ok(game_result)
