@@ -319,7 +319,7 @@ fn wait_for_keypress(key: KeyCode) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Print a line of message to the reserved area without disrupting the grid display
+/// Print a line of message below the grid without disrupting the grid display
 /// The cursor position is saved and restored after logging
 /// Returns `Err` if there was an I/O error
 /// If msg is None, clears all messages from the reserved rows
@@ -460,21 +460,9 @@ impl App {
         )?;
         match mode {
             AppMode::Visualize => {
-                queue!(
-                    self.stdout,
-                    style::SetAttribute(Attribute::Reverse),
-                    style::PrintStyledContent("Visualization Mode\r\n".with(Color::Yellow)),
-                    style::SetAttribute(Attribute::NoReverse),
-                )?;
                 visualize::run(&mut self.stdout)?;
             }
             AppMode::Game => {
-                queue!(
-                    self.stdout,
-                    style::SetAttribute(Attribute::Reverse),
-                    style::PrintStyledContent("Game Mode\r\n".with(Color::Yellow)),
-                    style::SetAttribute(Attribute::NoReverse),
-                )?;
                 game::run(&mut self.stdout)?;
             }
         }
