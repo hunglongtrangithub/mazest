@@ -683,14 +683,13 @@ impl<'a> Renderer<'a> {
         &mut self,
         grid_event_rx: Receiver<GridEvent>,
         user_action_event_rx: Receiver<UserActionEvent>,
-        cancel: &AtomicBool,
-        done: &AtomicBool,
+        should_stop: &AtomicBool,
     ) -> std::io::Result<RendererStatus> {
         queue!(self.stdout, terminal::Clear(ClearType::All), cursor::Hide)?;
         self.stdout.flush()?;
 
         loop {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            if should_stop.load(std::sync::atomic::Ordering::Acquire) {
                 // Canceled by main thread, exit render loop
                 tracing::info!("Rendering cancelled by main thread");
                 return Ok(RendererStatus::Cancelled);
@@ -767,8 +766,7 @@ impl<'a> Renderer<'a> {
             queue!(self.stdout, cursor::MoveTo(0, height))?;
             self.stdout.flush()?;
         }
-        // Set done flag
-        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("Rendering completed successfully");
         Ok(RendererStatus::Completed)
     }
 }

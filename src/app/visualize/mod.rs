@@ -147,24 +147,17 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
         }
     };
 
-    // Flag to indicate rendering is done. Set to true by the render thread when it finishes.
-    // TODO: consider using render_thread_handle.is_finished() to exit app loop instead of using
-    // an atomic bool flag. Then other threads can exit with just one flag: should_stop. Main
-    // thread takes care of the flag-setting decision.
-    let render_done = Arc::new(AtomicBool::new(false));
-    // Flag to indicate rendering should be cancelled. Set to true by the main thread on Esc key event.
-    let render_cancel = Arc::new(AtomicBool::new(false));
+    // Flag to indicate other threads should stop. Set to true by the main thread on Esc key event.
+    let should_stop = Arc::new(AtomicBool::new(false));
 
     let (user_input_event_tx, user_input_event_rx) = std::sync::mpsc::channel::<UserInputEvent>();
-    let render_done_for_input = render_done.clone();
-    let render_cancel_for_input = render_cancel.clone();
+    let should_stop_for_input = should_stop.clone();
     // Spawn a thread to listen for user input
     let input_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
         listen_to_user_input(
             user_input_event_tx,
             USER_INPUT_EVENT_POLL_TIMEOUT,
-            &render_done_for_input,
-            &render_cancel_for_input,
+            &should_stop_for_input,
         )
     });
 
@@ -174,19 +167,17 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
         std::sync::mpsc::channel::<UserActionEvent>();
 
     // Spawn a thread to listen for grid updates and render the maze
-    let render_cancel_for_render = render_cancel.clone();
-    let render_done_for_render = render_done.clone();
+    let render_cancel_for_render = should_stop.clone();
     let render_thread_handle = std::thread::spawn(move || {
         Renderer::new(MAX_HISTORY_GRID_EVENTS, Some((width, height))).render(
             grid_event_rx,
             user_action_event_rx,
             &render_cancel_for_render,
-            &render_done_for_render,
         )
     });
 
     // Spawn a thread to generate maze and solve it
-    let render_cancel_for_compute = render_cancel.clone();
+    let render_cancel_for_compute = should_stop.clone();
     let compute_thread_handle = std::thread::spawn(move || -> bool {
         if !loop_animation {
             return compute(width, height, grid_event_tx, generator, solver);
@@ -196,7 +187,7 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
         loop {
             let goal_reached = compute(width, height, grid_event_tx.clone(), generator, solver);
             // Check if rendering was cancelled
-            if render_cancel_for_compute.load(std::sync::atomic::Ordering::Relaxed) {
+            if render_cancel_for_compute.load(std::sync::atomic::Ordering::Acquire) {
                 tracing::info!("Compute thread detected render cancel, exiting loop");
                 return goal_reached;
             }
@@ -206,13 +197,13 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
     });
 
     // Main thread loop to listen for user input events during rendering
-    app_loop(
+    let completed = app_loop(
         user_input_event_rx,
         user_action_event_tx,
         INPUT_RECV_TIMEOUT,
-        render_done,
-        render_cancel,
-    );
+        render_thread_handle,
+        should_stop,
+    )?;
 
     // Wait for input thread to finish
     input_thread_handle.join().expect("Input thread panicked")?;
@@ -221,11 +212,6 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
     let goal_reached = compute_thread_handle
         .join()
         .expect("Compute thread panicked");
-
-    // Wait for render thread to finish
-    let completed = render_thread_handle
-        .join()
-        .expect("Render thread panicked")?;
 
     if let RendererStatus::Cancelled = completed {
         tracing::info!("Rendering was cancelled by user.");
@@ -257,19 +243,17 @@ fn app_loop(
     user_input_event_rx: Receiver<UserInputEvent>,
     user_action_event_tx: Sender<UserActionEvent>,
     input_recv_timeout: Duration,
-    render_done: Arc<AtomicBool>,
-    render_cancel: Arc<AtomicBool>,
-) {
+    render_thread_handle: std::thread::JoinHandle<Result<RendererStatus, std::io::Error>>,
+    should_stop: Arc<AtomicBool>,
+) -> std::io::Result<RendererStatus> {
     tracing::info!("Started main app loop");
     // Flag to indicate if the animation is currently paused
     let mut is_paused = false;
     loop {
         // Check if render is done
-        // FIXME: Should use Ordering::Release for flag setting (store()) and Ordering::Acquire for flag
-        // reading (load())
-        if render_done.load(std::sync::atomic::Ordering::Relaxed) {
-            // Drop the receiver to signal input thread to exit
-            drop(user_input_event_rx);
+        if render_thread_handle.is_finished() {
+            // Signal threads to stop
+            should_stop.store(true, std::sync::atomic::Ordering::Release);
             break;
         }
 
@@ -293,9 +277,9 @@ fn app_loop(
                         KeyCode::Esc => {
                             tracing::debug!("[app loop] Esc key pressed, notifying renderer");
                             // Error only happens if user_input_event_rx is dropped, which
-                            // means Renderer::render has exited already
+                            // means render thread has exited already
                             user_action_event_tx.send(UserActionEvent::Cancel).ok();
-                            render_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                            should_stop.store(true, std::sync::atomic::Ordering::Release);
                             break;
                         }
                         KeyCode::Enter => {
@@ -342,6 +326,9 @@ fn app_loop(
     }
     // The user_input_event_rx and user_action_event_tx are dropped here
     tracing::info!("Exiting main app loop");
+
+    // Wait for render thread to finish and get its status
+    render_thread_handle.join().expect("Render thread panicked")
 }
 
 /// Listen for user input events (key presses and resize)
@@ -349,14 +336,11 @@ fn app_loop(
 fn listen_to_user_input(
     user_input_event_tx: Sender<UserInputEvent>,
     event_poll_timeout: Duration,
-    render_done: &AtomicBool,
-    render_cancel: &AtomicBool,
+    should_stop: &AtomicBool,
 ) -> std::io::Result<()> {
     loop {
-        // Check if render is done or canceled
-        if render_done.load(std::sync::atomic::Ordering::Relaxed)
-            || render_cancel.load(std::sync::atomic::Ordering::Relaxed)
-        {
+        // Check if this thread should exit
+        if should_stop.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(());
         }
 
