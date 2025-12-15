@@ -13,8 +13,11 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
     let mut rng = get_rng(seed);
 
     // Initialize the maze with walls
-    (0..maze.height())
-        .for_each(|y| (0..maze.width()).for_each(|x| maze.set((x, y), GridCell::WALL)));
+    (0..maze.height()).for_each(|y| {
+        (0..maze.width()).for_each(|x| {
+            maze.set((x, y), GridCell::WALL);
+        })
+    });
 
     // Initialize the starting point
     let start: (u8, u8) = (
@@ -29,9 +32,9 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
         .filter(|&coord| maze[coord] == GridCell::WALL)
         .collect::<RandSetDefault<_>>();
     // Mark all frontier cells as marked in the maze for visualization
-    frontiers
-        .iter()
-        .for_each(|&coord| maze.set(coord, GridCell::MARK));
+    frontiers.iter().for_each(|&coord| {
+        maze.set(coord, GridCell::MARK);
+    });
 
     // Pick a random frontier cell
     while let Some(&frontier) = frontiers.get_rand() {

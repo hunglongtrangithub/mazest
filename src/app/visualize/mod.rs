@@ -67,6 +67,14 @@ const MAX_HISTORY_GRID_EVENTS: usize = 100;
 
 /// Entry point of the visualizer app
 pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
+    queue!(
+        stdout,
+        style::SetAttribute(Attribute::Reverse),
+        style::PrintStyledContent("Visualization Mode\r\n".with(Color::Yellow)),
+        style::SetAttribute(Attribute::NoReverse),
+    )?;
+    stdout.flush()?;
+
     // Ask user for maze dimensions
     let (width, height) = match app::ask_maze_dimensions(stdout)? {
         Some(dims) => dims,
@@ -140,6 +148,9 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
     };
 
     // Flag to indicate rendering is done. Set to true by the render thread when it finishes.
+    // TODO: consider using render_thread_handle.is_finished() to exit app loop instead of using
+    // an atomic bool flag. Then other threads can exit with just one flag: should_stop. Main
+    // thread takes care of the flag-setting decision.
     let render_done = Arc::new(AtomicBool::new(false));
     // Flag to indicate rendering should be cancelled. Set to true by the main thread on Esc key event.
     let render_cancel = Arc::new(AtomicBool::new(false));
@@ -198,12 +209,13 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
     app_loop(
         user_input_event_rx,
         user_action_event_tx,
+        INPUT_RECV_TIMEOUT,
         render_done,
         render_cancel,
     );
 
     // Wait for input thread to finish
-    let _ = input_thread_handle.join();
+    input_thread_handle.join().expect("Input thread panicked")?;
 
     // Wait for compute thread to finish
     let goal_reached = compute_thread_handle
@@ -244,6 +256,7 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
 fn app_loop(
     user_input_event_rx: Receiver<UserInputEvent>,
     user_action_event_tx: Sender<UserActionEvent>,
+    input_recv_timeout: Duration,
     render_done: Arc<AtomicBool>,
     render_cancel: Arc<AtomicBool>,
 ) {
@@ -252,13 +265,15 @@ fn app_loop(
     let mut is_paused = false;
     loop {
         // Check if render is done
+        // FIXME: Should use Ordering::Release for flag setting (store()) and Ordering::Acquire for flag
+        // reading (load())
         if render_done.load(std::sync::atomic::Ordering::Relaxed) {
             // Drop the receiver to signal input thread to exit
             drop(user_input_event_rx);
             break;
         }
 
-        let event = match user_input_event_rx.recv_timeout(INPUT_RECV_TIMEOUT) {
+        let event = match user_input_event_rx.recv_timeout(input_recv_timeout) {
             Err(e) => {
                 match e {
                     std::sync::mpsc::RecvTimeoutError::Timeout => {

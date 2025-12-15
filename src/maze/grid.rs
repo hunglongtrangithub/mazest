@@ -95,7 +95,8 @@ impl Grid {
         if old != cell {
             self.data[idx] = cell;
             if let Some(sender) = &self.grid_event_tx {
-                // This operation will block if the channel is full, which is acceptable behavior
+                // This operation will block if the channel is full.
+                // The receiver should be running in a separate thread to avoid deadlocks.
                 let _ = sender.send(GridEvent::Update {
                     coord,
                     old,

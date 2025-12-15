@@ -57,3 +57,20 @@ pub fn generate_maze(maze: &mut Maze, generator: Generator, seed: Option<u64>) {
         Generator::Kruskal => randomized_kruskal(maze, seed),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handle_empty_mazes_without_panic() {
+        let empty_sizes = [(0u8, 0u8), (0, 9), (9, 0)];
+        for (width, height) in empty_sizes {
+            let mut maze = Maze::new(width, height, None);
+            generate_maze(&mut maze, Generator::RecurBacktrack, None);
+            generate_maze(&mut maze, Generator::Prim, None);
+            generate_maze(&mut maze, Generator::RecurDiv, None);
+            generate_maze(&mut maze, Generator::Kruskal, None);
+        }
+    }
+}

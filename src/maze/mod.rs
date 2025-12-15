@@ -51,15 +51,23 @@ impl Maze {
         self.width
     }
 
-    /// Checks if the maze is empty (zero width and height).
+    /// Checks if the maze is empty (zero width or height).
     pub fn is_empty(&self) -> bool {
-        self.width == 0 && self.height == 0
+        self.width == 0 || self.height == 0
     }
 
     /// Sets the cell at the given coordinate to the specified [`GridCell`] value.
-    pub fn set(&mut self, coord: (u8, u8), cell: GridCell) {
+    /// Returns the grid coordinate where the cell was set.
+    pub fn set(&mut self, coord: (u8, u8), cell: GridCell) -> (u16, u16) {
         let grid_coord = (coord.0 as u16 * 2 + 1, coord.1 as u16 * 2 + 1);
         self.grid.set(grid_coord, cell);
+        grid_coord
+    }
+
+    /// Returns a reference to the maze cell at the given maze coordinate.
+    pub fn cell_at(&self, coord: (u8, u8)) -> &GridCell {
+        let grid_coord = (coord.0 as u16 * 2 + 1, coord.1 as u16 * 2 + 1);
+        &self.grid[grid_coord]
     }
 
     /// Checks if the given coordinate is within the bounds of the maze.
@@ -203,7 +211,10 @@ impl Maze {
     /// `orientation` determines the orientation of the path to set:
     /// - `Vertical`: Sets the path cell below the specified cell (between `from` and `(from.0, from.1+1)`)
     /// - `Horizontal`: Sets the path cell to the right of the specified cell (between `from` and `(from.0+1, from.1)`)
-    pub fn set_path_cell_after(&mut self, from: (u8, u8), orientation: Orientation) {
+    ///
+    /// # Returns
+    /// The grid coordinate of the wall cell that was set to a path.
+    pub fn set_path_cell_after(&mut self, from: (u8, u8), orientation: Orientation) -> (u16, u16) {
         let wall_coord = match orientation {
             Orientation::Horizontal => {
                 if from.0 + 1 >= self.width {
@@ -220,6 +231,7 @@ impl Maze {
         };
         self.grid
             .set(wall_coord, GridCell::Path(PathType::Path(orientation)));
+        wall_coord
     }
 
     /// Clears all existing walls within the maze. Boundary walls are preserved.

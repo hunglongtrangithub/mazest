@@ -17,6 +17,7 @@ use crate::{
     maze::{cell::GridCell, grid::GridEvent},
 };
 
+// TODO: add tests
 /// Struct to manage render refresh time scaling based on a quantized level scale
 struct RenderRefreshTimeScale {
     delta: Duration,
@@ -674,6 +675,10 @@ impl<'a> Renderer<'a> {
     /// - `Ok(RendererStatus::Completed)` if rendering completed successfully
     /// - `Ok(RendererStatus::Cancelled)` if rendering was cancelled
     /// - `Err` if there was an I/O error
+    ///
+    /// This function will block on waiting for grid events, but will check for user action events
+    /// in a non-blocking manner. The reason is that grid events are expected to arrive at a steady pace
+    /// from the compute thread, while user action events are sporadic and should be handled immediately.
     pub fn render(
         &mut self,
         grid_event_rx: Receiver<GridEvent>,
