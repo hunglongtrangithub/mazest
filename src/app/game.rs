@@ -1,13 +1,17 @@
 use crate::{
     app,
     generators::{Generator, generate_maze},
-    maze::{Maze, Orientation, cell::GridCell},
+    maze::{
+        Maze, Orientation,
+        cell::{GridCell, PathType},
+    },
 };
 use crossterm::{
     ExecutableCommand, cursor,
     event::{self, Event, KeyCode},
-    queue,
+    execute, queue,
     style::{self, Attribute, Color, StyledContent, Stylize},
+    terminal::{self, ClearType},
 };
 use std::{
     io::{Stdout, Write},
@@ -51,8 +55,10 @@ enum GameRunResult {
 
 struct GameState {
     maze: Maze,
+    /// Tracks where the player currently is
     current: (u8, u8),
     goal: (u8, u8),
+    /// Sender to send UI events of the maze's grid to the render thread
     ui_event_tx: Sender<UiEvent>,
 }
 
@@ -79,7 +85,6 @@ impl GameState {
         width: u8,
         height: u8,
         generator: Generator,
-        random_start_goal: bool,
         ui_event_tx: Sender<UiEvent>,
     ) -> Self {
         // Get the initial maze
@@ -87,19 +92,10 @@ impl GameState {
         // Carve the maze with the generator algorithm
         generate_maze(&mut maze, generator, None);
 
-        let start = if random_start_goal {
-            (rand::random_range(0..width), rand::random_range(0..height))
-        } else {
-            (0, 0)
-        };
-        // Use GridCell::START to represent Pacman
-        maze.set(start, GridCell::START);
+        let start = (0, 0);
+        maze.set(start, GridCell::PACMAN);
 
-        let goal = if random_start_goal {
-            (rand::random_range(0..width), rand::random_range(0..height))
-        } else {
-            (width - 1, height - 1)
-        };
+        let goal = (width - 1, height - 1);
         maze.set(goal, GridCell::GOAL);
 
         GameState {
@@ -173,45 +169,63 @@ impl GameState {
             return None;
         }
 
-        // Ensure the corridor cell between the two cells is a path for rendering
-        let path_coord = self.maze.set_path_cell_after(check_pos, path_orientation);
-        if self
-            .ui_event_tx
-            .send(UiEvent::GridUpdate {
-                coord: path_coord,
-                new: self.maze.grid()[path_coord],
-            })
-            .is_err()
-        {
-            // Receiver has been dropped, cannot send UI event
-            return None;
+        // Check whether new_pos is visited
+        if *self.maze.cell_at(new_pos) == GridCell::VISITED {
+            tracing::debug!("[game] Moving to already visited cell at {:?}", new_pos);
+            // Mark the current cell as empty path
+            let current_grid_coord = self.maze.set(self.current, GridCell::EMPTY);
+            self.ui_event_tx
+                .send(UiEvent::GridUpdate {
+                    coord: current_grid_coord,
+                    new: GridCell::EMPTY,
+                })
+                .ok(); // Error when render thread is closed, ignore
+
+            // Mark the route cell in between as empty path
+            let route_grid_coord =
+                self.maze
+                    .set_path_cell_after(check_pos, path_orientation, Some(PathType::Empty));
+            self.ui_event_tx
+                .send(UiEvent::GridUpdate {
+                    coord: route_grid_coord,
+                    new: GridCell::EMPTY,
+                })
+                .ok(); // Error when render thread is closed, ignore
+        } else {
+            tracing::debug!("[game] Moving to new cell at {:?}", new_pos);
+            // Mark the current cell as visited,
+            let current_grid_coord = self.maze.set(self.current, GridCell::VISITED);
+            self.ui_event_tx
+                .send(UiEvent::GridUpdate {
+                    coord: current_grid_coord,
+                    new: GridCell::VISITED,
+                })
+                .ok(); // Error when render thread is closed, ignore
+
+            // Mark the path cell in between as a route cell
+            let route_grid_coord = self
+                .maze
+                .set_path_cell_after(check_pos, path_orientation, None);
+            self.ui_event_tx
+                .send(UiEvent::GridUpdate {
+                    coord: route_grid_coord,
+                    new: GridCell::Path(PathType::Route(path_orientation)),
+                })
+                .ok(); // Error when render thread is closed, ignore
         }
 
-        if self
-            .ui_event_tx
+        // Mark the new position as Pacman
+        let new_grid_coord = self.maze.set(new_pos, GridCell::PACMAN);
+        self.ui_event_tx
             .send(UiEvent::GridUpdate {
-                coord: self.maze.set(self.current, GridCell::VISITED),
-                new: *self.maze.cell_at(self.current),
+                coord: new_grid_coord,
+                new: GridCell::PACMAN,
             })
-            .is_err()
-        {
-            // Receiver has been dropped, cannot send UI event
-            return None;
-        };
+            .ok(); // Error when render thread is closed, ignore
 
-        // Move to new position
+        // Update current position
         self.current = new_pos;
-        if self
-            .ui_event_tx
-            .send(UiEvent::GridUpdate {
-                coord: self.maze.set(self.current, GridCell::START),
-                new: *self.maze.cell_at(self.current),
-            })
-            .is_err()
-        {
-            // Receiver has been dropped, cannot send UI event
-            return None;
-        };
+
         Some(self.current)
     }
 }
@@ -275,8 +289,14 @@ fn start_game(
     width: u8,
     height: u8,
     generator: Generator,
-    random_start_goal: bool,
 ) -> std::io::Result<GameRunResult> {
+    // Clear screen
+    execute!(
+        stdout,
+        terminal::Clear(ClearType::All),
+        cursor::MoveTo(0, 0)
+    )?;
+
     let (ui_event_tx, ui_event_rx) = std::sync::mpsc::channel::<UiEvent>();
 
     // Spawn render thread to render grid events from the game state
@@ -285,13 +305,7 @@ fn start_game(
         std::thread::spawn(move || -> std::io::Result<()> { render_ui_events(ui_event_rx) });
 
     // Initialize game state and render initial maze
-    let game_state = GameState::initialize(
-        width,
-        height,
-        generator,
-        random_start_goal,
-        ui_event_tx.clone(),
-    );
+    let game_state = GameState::initialize(width, height, generator, ui_event_tx.clone());
     // Send grid dimensions to render thread
     if ui_event_tx
         .send(UiEvent::GridInit {
@@ -361,10 +375,14 @@ fn start_game(
 
     // At this point, all UI event senders are dropped, so the render thread will exit
     // Wait for render and input threads to finish
+    tracing::debug!("[game] Waiting for render and input threads to finish...");
+    // TODO: Make render thread and input thread terminate more quickly
     render_thread_handle
         .join()
         .expect("Render thread paniched")?;
+    tracing::debug!("[game] Render thread finished");
     input_thread_handle.join().expect("Input thread panicked")?;
+    tracing::debug!("[game] Input thread finished");
 
     app::log_terminal(stdout, grid_height, None::<StyledContent<&str>>)?;
     match game_result {
@@ -593,13 +611,13 @@ fn listen_to_user_input(
 }
 
 pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
-    queue!(
+    execute!(
         stdout,
         style::SetAttribute(Attribute::Reverse),
         style::PrintStyledContent("Game Mode\r\n".with(Color::Yellow)),
         style::SetAttribute(Attribute::NoReverse),
     )?;
-    stdout.flush()?;
+
     // Ask user for maze dimensions
     let (width, height) = match app::ask_maze_dimensions(stdout)? {
         Some(dims) => dims,
@@ -654,7 +672,7 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
     );
 
     loop {
-        let game_result = start_game(stdout, width, height, generator, false)?;
+        let game_result = start_game(stdout, width, height, generator)?;
         if game_result == GameRunResult::Canceled {
             break;
         }

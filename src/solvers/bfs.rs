@@ -38,7 +38,7 @@ pub fn solve_bfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
                         Orientation::Horizontal,
                     )
                 };
-                maze.set_path_cell_after(from, orientation);
+                maze.set_path_cell_after(from, orientation, None);
                 child = parent.clone();
             }
             return true; // Goal found
@@ -67,7 +67,7 @@ pub fn solve_bfs(maze: &mut Maze, start: (u8, u8), goal: (u8, u8)) -> bool {
         .filter(|&(_, c)| maze.is_in_bounds(c))
         .filter(|&(i, c)| {
             let is_neighbor_unvisited =
-                !visited.contains(&c) && (maze[c] == GridCell::PATH || maze[c] == GridCell::GOAL);
+                !visited.contains(&c) && (maze[c] == GridCell::EMPTY || maze[c] == GridCell::GOAL);
             let (from, orientation) = match i {
                 0 => (c, Orientation::Vertical),                  // Left
                 1 => (rc_current.coord, Orientation::Vertical),   // Right

@@ -24,7 +24,7 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
         rng.random_range(0..maze.width()),
         rng.random_range(0..maze.height()),
     );
-    maze.set(start, GridCell::PATH);
+    maze.set(start, GridCell::EMPTY);
 
     // Get the neighbors of the starting point and add them to the frontier set
     // Currently, all neighbors are walls at this point
@@ -43,7 +43,7 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
 
         // Get the neighbors of the frontier cell that are part of the maze (i.e., not walls)
         let empty_neighbors = get_neighbors(frontier, maze)
-            .filter(|&coord| maze[coord] == GridCell::PATH)
+            .filter(|&coord| maze[coord] == GridCell::EMPTY)
             .collect::<Vec<_>>();
 
         if !empty_neighbors.is_empty() {
@@ -68,7 +68,7 @@ pub fn randomized_prim(maze: &mut Maze, seed: Option<u64>) {
             maze.remove_wall_cell_after(from, orientation);
 
             // Mark the frontier cell as part of the maze
-            maze.set(frontier, GridCell::PATH);
+            maze.set(frontier, GridCell::EMPTY);
 
             // Add the neighbors of the frontier cell that are walls to the frontier set
             let neighbors_to_mark = get_neighbors(frontier, maze)

@@ -36,7 +36,7 @@ impl Maze {
         };
         (0..height).for_each(|y| {
             (0..width).for_each(|x| {
-                maze.set((x, y), GridCell::PATH);
+                maze.set((x, y), GridCell::EMPTY);
             });
         });
         maze
@@ -109,7 +109,7 @@ impl Maze {
             }
         };
         if matches!(self.grid[wall_coord], GridCell::Wall(_)) {
-            self.grid.set(wall_coord, GridCell::PATH);
+            self.grid.set(wall_coord, GridCell::EMPTY);
             true
         } else {
             false
@@ -207,15 +207,21 @@ impl Maze {
         matches!(self.grid[wall_coord], GridCell::Wall(_))
     }
 
-    /// Set the wall cell after the specified cell in the given orientation to be a path (removing the wall).
+    /// Set the grid cell after the specified maze cell in the given orientation.
     /// `orientation` determines the orientation of the path to set:
     /// - `Vertical`: Sets the path cell below the specified cell (between `from` and `(from.0, from.1+1)`)
     /// - `Horizontal`: Sets the path cell to the right of the specified cell (between `from` and `(from.0+1, from.1)`)
     ///
+    /// `path_type` allows specifying a custom path type to set; if `None`, defaults to `PathType::Route(orientation)`
     /// # Returns
-    /// The grid coordinate of the wall cell that was set to a path.
-    pub fn set_path_cell_after(&mut self, from: (u8, u8), orientation: Orientation) -> (u16, u16) {
-        let wall_coord = match orientation {
+    /// The grid coordinate of the maze cell that was set to a route cell.
+    pub fn set_path_cell_after(
+        &mut self,
+        from: (u8, u8),
+        orientation: Orientation,
+        path_type: Option<PathType>,
+    ) -> (u16, u16) {
+        let coord = match orientation {
             Orientation::Horizontal => {
                 if from.0 + 1 >= self.width {
                     panic!("Cannot set path cell after the rightmost cell");
@@ -229,9 +235,14 @@ impl Maze {
                 (from.0 as u16 * 2 + 1, from.1 as u16 * 2 + 2)
             }
         };
-        self.grid
-            .set(wall_coord, GridCell::Path(PathType::Path(orientation)));
-        wall_coord
+        self.grid.set(
+            coord,
+            match path_type {
+                Some(pt) => GridCell::Path(pt),
+                None => GridCell::Path(PathType::Route(orientation)),
+            },
+        );
+        coord
     }
 
     /// Clears all existing walls within the maze. Boundary walls are preserved.
@@ -242,7 +253,7 @@ impl Maze {
                 if self.grid.is_boundary(x, y) {
                     return;
                 }
-                self.grid.set((x, y), GridCell::PATH);
+                self.grid.set((x, y), GridCell::EMPTY);
             });
         });
     }
@@ -317,7 +328,7 @@ mod tests {
         // Trying to remove the same wall again should return false
         assert!(!maze.remove_wall_cell_after((1, 1), Orientation::Vertical));
         // Check that the wall has been removed in the grid
-        assert_eq!(maze.grid[(3, 5)], GridCell::PATH);
+        assert_eq!(maze.grid[(3, 5)], GridCell::EMPTY);
     }
 
     #[test]

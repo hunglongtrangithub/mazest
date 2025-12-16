@@ -2,7 +2,7 @@ mod history;
 mod renderer;
 
 use std::{
-    io::{Stdout, Write},
+    io::Stdout,
     sync::{
         Arc,
         atomic::AtomicBool,
@@ -14,7 +14,7 @@ use std::{
 use crossterm::{
     ExecutableCommand,
     event::{self, KeyCode},
-    queue,
+    execute,
     style::{self, Attribute, Color, Stylize},
 };
 use rand::Rng;
@@ -67,13 +67,12 @@ const MAX_HISTORY_GRID_EVENTS: usize = 100;
 
 /// Entry point of the visualizer app
 pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
-    queue!(
+    execute!(
         stdout,
         style::SetAttribute(Attribute::Reverse),
         style::PrintStyledContent("Visualization Mode\r\n".with(Color::Yellow)),
         style::SetAttribute(Attribute::NoReverse),
     )?;
-    stdout.flush()?;
 
     // Ask user for maze dimensions
     let (width, height) = match app::ask_maze_dimensions(stdout)? {
@@ -121,7 +120,7 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
         }
     };
 
-    queue!(
+    execute!(
         stdout,
         style::PrintStyledContent(
             "Controls:\r\n"
@@ -134,7 +133,6 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
         style::PrintStyledContent("  Esc: Exit\r\n\r\n".with(Color::Cyan)),
     )?;
 
-    stdout.flush()?;
     // Ask if user wants to loop generation and solving
     let loop_animation = match app::select_from_menu(
         stdout,
@@ -339,7 +337,7 @@ fn listen_to_user_input(
     should_stop: &AtomicBool,
 ) -> std::io::Result<()> {
     loop {
-        // Check if this thread should exit
+        // Check if this thread should exit (on cancel)
         if should_stop.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(());
         }

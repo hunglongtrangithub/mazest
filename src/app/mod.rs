@@ -1,7 +1,7 @@
 mod game;
 mod visualize;
 
-use crossterm::{QueueableCommand, event::Event};
+use crossterm::{QueueableCommand, event::Event, execute};
 use std::{
     fmt::Display,
     io::{Stdout, Write},
@@ -453,7 +453,8 @@ impl App {
             None => return Ok(()),
         };
 
-        queue!(
+        // Clear screen
+        execute!(
             self.stdout,
             terminal::Clear(ClearType::All),
             cursor::MoveTo(0, 0)

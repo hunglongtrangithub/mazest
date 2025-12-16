@@ -25,7 +25,7 @@ pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
         rng.random_range(0..maze.width()),
         rng.random_range(0..maze.height()),
     );
-    maze.set(start, GridCell::PATH);
+    maze.set(start, GridCell::EMPTY);
 
     // Initialize the stack with the starting point
     // The stack will keep only path cells
@@ -55,7 +55,7 @@ pub fn recursive_backtrack(maze: &mut Maze, seed: Option<u64>) {
             };
             maze.remove_wall_cell_after(from, orientation);
 
-            maze.set(neighbor, GridCell::PATH);
+            maze.set(neighbor, GridCell::EMPTY);
             // Put the cell back first so we can look at another neighbor  of this cell later
             stack.push(cell);
             // Put the neighbor to carve the maze in that neighbor's direction

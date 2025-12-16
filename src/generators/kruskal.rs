@@ -66,7 +66,7 @@ pub fn randomized_kruskal(maze: &mut Maze, seed: Option<u64>) {
     maze.fill_walls();
     (0..height).for_each(|y| {
         (0..width).for_each(|x| {
-            maze.set((x, y), GridCell::PATH);
+            maze.set((x, y), GridCell::EMPTY);
         });
     });
 
