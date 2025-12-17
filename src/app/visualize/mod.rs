@@ -259,7 +259,7 @@ fn app_loop(
             Err(e) => {
                 match e {
                     std::sync::mpsc::RecvTimeoutError::Timeout => {
-                        // Skip to next iteration to check render_done again
+                        // Skip to next iteration to check whether render is done
                         continue;
                     }
                     std::sync::mpsc::RecvTimeoutError::Disconnected => {

@@ -39,6 +39,8 @@ pub enum PathType {
     Goal,
     /// Pacman cell
     Pacman,
+    /// Ghost cell
+    Ghost,
 }
 
 /// Represents different types of wall cells in the maze.
@@ -65,6 +67,7 @@ impl fmt::Display for GridCell {
                 PathType::Start => "🟩".with(Color::Green),
                 PathType::Goal => "🟥".with(Color::Red),
                 PathType::Pacman => "🟡".with(Color::Yellow),
+                PathType::Ghost => "👻".with(Color::Cyan),
             },
             GridCell::Wall(wall) => match wall {
                 WallType::Wall => "⬜".with(Color::White),

@@ -457,7 +457,7 @@ impl App {
         execute!(
             self.stdout,
             terminal::Clear(ClearType::All),
-            cursor::MoveTo(0, 0)
+            cursor::MoveTo(0, 0),
         )?;
         match mode {
             AppMode::Visualize => {
