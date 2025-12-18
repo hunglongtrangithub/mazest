@@ -53,15 +53,28 @@ const GAME_RUN_DURATION: Duration = Duration::from_secs(60);
 const GAME_TIMER_TICK_DURATION: Duration = Duration::from_secs(1);
 
 /// Render the current maze to stdout
-fn render_ui_events(ui_event_rx: Receiver<UiEvent>) -> std::io::Result<()> {
+fn render_ui_events(
+    ui_event_rx: Receiver<UiEvent>,
+    should_stop: &AtomicBool,
+) -> std::io::Result<()> {
     // Get a new stdout handle
     let mut stdout = std::io::stdout();
     // Store grid dimensions once received
     let mut grid_dims = None;
     loop {
-        // Block and render any new grid events as they come from the sender
-        match ui_event_rx.recv() {
-            Err(_) => {
+        // Check if we should stop
+        if should_stop.load(std::sync::atomic::Ordering::Acquire) {
+            tracing::debug!("[render] should_stop flag set, exiting render thread");
+            break;
+        }
+
+        // render any new grid events as they come from the sender
+        match ui_event_rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // No event, check if we should stop
+                continue;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 // All senders are dropped. Break from the loop
                 tracing::debug!("[render] UI event channel closed, exiting render thread");
                 break;
@@ -121,10 +134,15 @@ fn start_game(
 
     let (ui_event_tx, ui_event_rx) = std::sync::mpsc::channel::<UiEvent>();
 
+    // Flag to let threads stop. Enabled by the main thread only.
+    let should_stop = Arc::new(AtomicBool::new(false));
+
     // Spawn render thread to render grid events from the game state
     // Initial maze will be rendered to the terminal
-    let render_thread_handle =
-        std::thread::spawn(move || -> std::io::Result<()> { render_ui_events(ui_event_rx) });
+    let should_stop_for_render = should_stop.clone();
+    let render_thread_handle = std::thread::spawn(move || -> std::io::Result<()> {
+        render_ui_events(ui_event_rx, &should_stop_for_render)
+    });
 
     // Initialize game state and render initial maze
     let game_state = GameState::initialize(width, height, generator, ui_event_tx.clone());
@@ -154,9 +172,6 @@ fn start_game(
             }
         }
     }
-
-    // Flag to let other threads stop. Enabled by the main thread only.
-    let should_stop = Arc::new(AtomicBool::new(false));
 
     let (user_input_event_tx, user_input_event_rx) = std::sync::mpsc::channel::<UserInputEvent>();
 
@@ -195,16 +210,15 @@ fn start_game(
     )?;
     tracing::debug!("[game] Game loop exited with result: {:?}", game_result);
 
+    tracing::debug!("[game] Waiting for render and input threads to finish...");
+    input_thread_handle.join().expect("Input thread panicked")?;
+    tracing::debug!("[game] Input thread finished");
     // At this point, all UI event senders are dropped, so the render thread will exit
     // Wait for render and input threads to finish
-    tracing::debug!("[game] Waiting for render and input threads to finish...");
-    // TODO: Make render thread and input thread terminate more quickly
     render_thread_handle
         .join()
         .expect("Render thread paniched")?;
     tracing::debug!("[game] Render thread finished");
-    input_thread_handle.join().expect("Input thread panicked")?;
-    tracing::debug!("[game] Input thread finished");
 
     app::log_terminal(stdout, grid_height, None::<StyledContent<&str>>)?;
     match game_result {
@@ -334,7 +348,7 @@ fn game_loop(
 /// * `game_run_duration`: The total duration of the game run
 /// * `tick_duration`: The duration between each tick to log remaining time
 /// * `grid_height`: The height of the maze grid, used to position the log correctly
-/// * `should_stop`: Flag to check for exiting early (due to user cancel)
+/// * `should_stop`: Flag to check for exiting early
 fn start_timer(
     start_time: Instant,
     game_run_duration: Duration,
