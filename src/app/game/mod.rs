@@ -57,17 +57,65 @@ fn render_ui_events(
     ui_event_rx: Receiver<UiEvent>,
     should_stop: &AtomicBool,
 ) -> std::io::Result<()> {
-    // Get a new stdout handle
-    let mut stdout = std::io::stdout();
+    // Get a new stdout handle and lock it for the duration of the render thread.
+    // No other thread should write to stdout while this thread is running.
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
     // Store grid dimensions once received
     let mut grid_dims = None;
+
+    // Closure to handle a single UI event
+    let mut handle_event = |event: UiEvent| -> std::io::Result<()> {
+        match event {
+            UiEvent::GridInit { width, height } => {
+                grid_dims = Some((width, height));
+            }
+            UiEvent::GridUpdate { coord, new } => {
+                match grid_dims {
+                    Some(grid_dims) => {
+                        if coord.0 >= grid_dims.0 || coord.1 >= grid_dims.1 {
+                            // Out of bounds, skip rendering
+                            return Ok(());
+                        }
+                    }
+                    // Grid dimensions not yet received, cannot render
+                    None => return Ok(()),
+                }
+                // Move the cursor to the specified coordinate and print the
+                // new cell using the grid dimensions
+                queue!(
+                    stdout,
+                    cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
+                    style::Print(new)
+                )?;
+                stdout.flush()?;
+            }
+            UiEvent::LogMessage(msg) => {
+                // Log message to terminal below the maze
+                app::log_terminal(
+                    &mut stdout,
+                    // Use grid height if available, otherwise 0
+                    grid_dims.unwrap_or((0, 0)).1,
+                    msg,
+                )?;
+            }
+        }
+        Ok(())
+    };
+
     loop {
         // Check if we should stop
         if should_stop.load(std::sync::atomic::Ordering::Acquire) {
-            tracing::debug!("[render] should_stop flag set, exiting render thread");
+            // Render the remaining events before exiting
+            while let Ok(event) = ui_event_rx.try_recv() {
+                tracing::debug!(
+                    "[render] should_stop flag set, draining remaining UI events before exiting"
+                );
+                handle_event(event)?;
+            }
+            tracing::debug!("[render] exiting render thread");
             break;
         }
-
         // render any new grid events as they come from the sender
         match ui_event_rx.try_recv() {
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -79,40 +127,9 @@ fn render_ui_events(
                 tracing::debug!("[render] UI event channel closed, exiting render thread");
                 break;
             }
-            Ok(event) => match event {
-                UiEvent::GridInit { width, height } => {
-                    grid_dims = Some((width, height));
-                }
-                UiEvent::GridUpdate { coord, new } => {
-                    match grid_dims {
-                        Some(grid_dims) => {
-                            if coord.0 >= grid_dims.0 || coord.1 >= grid_dims.1 {
-                                // Out of bounds, skip rendering
-                                continue;
-                            }
-                        }
-                        // Grid dimensions not yet received, cannot render
-                        None => continue,
-                    }
-                    // Move the cursor to the specified coordinate and print the
-                    // new cell using the grid dimensions
-                    queue!(
-                        stdout,
-                        cursor::MoveTo(coord.0 * GridCell::CELL_WIDTH, coord.1),
-                        style::Print(new)
-                    )?;
-                    stdout.flush()?;
-                }
-                UiEvent::LogMessage(msg) => {
-                    // Log message to terminal below the maze
-                    app::log_terminal(
-                        &mut stdout,
-                        // Use grid height if available, otherwise 0
-                        grid_dims.unwrap_or((0, 0)).1,
-                        msg,
-                    )?;
-                }
-            },
+            Ok(event) => {
+                handle_event(event)?;
+            }
         }
     }
     Ok(())
@@ -290,6 +307,8 @@ fn game_loop(
         // Check if goal is reached
         if game_state.goal_reached() {
             tracing::info!("[game loop] Goal reached!");
+            // Drop the game state's event sender first
+            drop(game_state);
             // Notify all threads to stop
             should_stop.store(true, std::sync::atomic::Ordering::Release);
             return Ok(GameRunResult::GoalReached);
