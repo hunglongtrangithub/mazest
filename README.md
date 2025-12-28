@@ -4,7 +4,7 @@ A responsive maze generation and solving visualizer for the terminal, built with
 
 ## Demo
 
-[![asciicast](https://asciinema.org/a/753075.svg)](https://asciinema.org/a/753075)
+[![asciicast](https://asciinema.org/a/750044.svg)](https://asciinema.org/a/750044)
 
 ## Key Features
 
