@@ -26,12 +26,17 @@ enum UserInputEvent {
     Resize,
 }
 
+/// Events sent to the UI render thread to update the maze display
 enum UiEvent {
+    /// Initialize the grid with given dimensions
     GridInit { width: u16, height: u16 },
+    /// Update a single cell in the grid
     GridUpdate { coord: (u16, u16), new: GridCell },
+    /// Log a message to the terminal below the maze
     LogMessage(Option<StyledContent<String>>),
 }
 
+/// Game run result after a single run
 #[derive(Debug, PartialEq)]
 enum GameRunResult {
     /// Goal is reached before timer runs out
@@ -386,29 +391,27 @@ fn start_timer(
             // Receiver has been dropped, exit the thread
             return Ok(());
         }
+
         let remaining_time = GAME_RUN_DURATION - start_time.elapsed();
+        let msg = format!("Time remain: {}", remaining_time.as_secs())
+            .with({
+                // Set message color based on remaining time
+                if remaining_time <= GAME_RUN_DURATION / 4 {
+                    Color::Red
+                } else if remaining_time <= GAME_RUN_DURATION / 2 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                }
+            })
+            .attribute(Attribute::Bold);
 
-        // Set message color based on remaining time
-
-        let msg = if remaining_time <= GAME_RUN_DURATION / 4 {
-            format!("Time remain: {}", remaining_time.as_secs())
-                .with(Color::Red)
-                .attribute(Attribute::Bold)
-        } else if remaining_time <= GAME_RUN_DURATION / 2 {
-            format!("Time remain: {}", remaining_time.as_secs())
-                .with(Color::Yellow)
-                .attribute(Attribute::Bold)
-        } else {
-            format!("Time remain: {}", remaining_time.as_secs())
-                .with(Color::Green)
-                .attribute(Attribute::Bold)
-        };
         // Log new remaining time
         if ui_event_tx.send(UiEvent::LogMessage(Some(msg))).is_err() {
             // Receiver has been dropped, exit the thread
             return Ok(());
         }
-        // Sleep for 1 second
+
         std::thread::sleep(tick_duration);
     }
     Ok(())

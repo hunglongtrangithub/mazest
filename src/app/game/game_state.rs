@@ -62,10 +62,12 @@ impl GameState {
         }
     }
 
+    /// Get the game state's maze grid reference.
     pub fn grid(&self) -> &Grid {
         self.maze.grid()
     }
 
+    /// Check if the goal has been reached.
     pub fn goal_reached(&self) -> bool {
         self.current == self.goal
     }
@@ -134,7 +136,8 @@ impl GameState {
             return None;
         }
 
-        // Check whether new_pos is visited
+        // Check whether new_pos is visited and send UI updates to render thread
+        // It's fine if render thread is closed
         if *self.maze.cell_at(new_pos) == GridCell::VISITED {
             tracing::debug!("[game] Moving to already visited cell at {:?}", new_pos);
             // Mark the current cell as empty path
@@ -144,7 +147,7 @@ impl GameState {
                     coord: current_grid_coord,
                     new: GridCell::EMPTY,
                 })
-                .ok(); // Error when render thread is closed, ignore
+                .ok();
 
             // Mark the route cell in between as empty path
             let route_grid_coord =
@@ -155,7 +158,7 @@ impl GameState {
                     coord: route_grid_coord,
                     new: GridCell::EMPTY,
                 })
-                .ok(); // Error when render thread is closed, ignore
+                .ok();
         } else {
             tracing::debug!("[game] Moving to new cell at {:?}", new_pos);
             // Mark the current cell as visited,
@@ -165,7 +168,7 @@ impl GameState {
                     coord: current_grid_coord,
                     new: GridCell::VISITED,
                 })
-                .ok(); // Error when render thread is closed, ignore
+                .ok();
 
             // Mark the path cell in between as a route cell
             let route_grid_coord = self
@@ -176,7 +179,7 @@ impl GameState {
                     coord: route_grid_coord,
                     new: GridCell::Path(PathType::Route(path_orientation)),
                 })
-                .ok(); // Error when render thread is closed, ignore
+                .ok();
         }
 
         // Mark the new position as Pacman
