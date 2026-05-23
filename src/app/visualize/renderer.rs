@@ -689,7 +689,7 @@ impl<'a> Renderer<'a> {
         self.stdout.flush()?;
 
         loop {
-            if should_stop.load(std::sync::atomic::Ordering::Acquire) {
+            if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
                 // Canceled by main thread, exit render loop
                 tracing::info!("Rendering cancelled by main thread");
                 return Ok(RendererStatus::Cancelled);

@@ -185,7 +185,7 @@ pub fn run(stdout: &mut Stdout) -> std::io::Result<()> {
         loop {
             let goal_reached = compute(width, height, grid_event_tx.clone(), generator, solver);
             // Check if rendering was cancelled
-            if render_cancel_for_compute.load(std::sync::atomic::Ordering::Acquire) {
+            if render_cancel_for_compute.load(std::sync::atomic::Ordering::Relaxed) {
                 tracing::info!("Compute thread detected render cancel, exiting loop");
                 return goal_reached;
             }
@@ -251,7 +251,7 @@ fn app_loop(
         // Check if render is done
         if render_thread_handle.is_finished() {
             // Signal threads to stop
-            should_stop.store(true, std::sync::atomic::Ordering::Release);
+            should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
             break;
         }
 
@@ -277,7 +277,7 @@ fn app_loop(
                             // Error only happens if user_input_event_rx is dropped, which
                             // means render thread has exited already
                             user_action_event_tx.send(UserActionEvent::Cancel).ok();
-                            should_stop.store(true, std::sync::atomic::Ordering::Release);
+                            should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
                             break;
                         }
                         KeyCode::Enter => {
@@ -338,7 +338,7 @@ fn listen_to_user_input(
 ) -> std::io::Result<()> {
     loop {
         // Check if this thread should exit (on cancel)
-        if should_stop.load(std::sync::atomic::Ordering::Acquire) {
+        if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
 

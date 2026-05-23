@@ -110,7 +110,7 @@ fn render_ui_events(
 
     loop {
         // Check if we should stop
-        if should_stop.load(std::sync::atomic::Ordering::Acquire) {
+        if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
             // Render the remaining events before exiting
             while let Ok(event) = ui_event_rx.try_recv() {
                 tracing::debug!(
@@ -156,7 +156,7 @@ fn start_game(
 
     let (ui_event_tx, ui_event_rx) = std::sync::mpsc::channel::<UiEvent>();
 
-    // Flag to let threads stop. Enabled by the main thread only.
+    // Flag to let threads stop. Set to true by the main thread only.
     let should_stop = Arc::new(AtomicBool::new(false));
 
     // Spawn render thread to render grid events from the game state
@@ -305,7 +305,7 @@ fn game_loop(
         if timer_thread_handle.is_finished() {
             tracing::info!("[game loop] Timer thread finished, game result is Timeout");
             // Notify all threads to stop
-            should_stop.store(true, std::sync::atomic::Ordering::Release);
+            should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
             return Ok(GameRunResult::Timeout);
         }
 
@@ -315,7 +315,7 @@ fn game_loop(
             // Drop the game state's event sender first
             drop(game_state);
             // Notify all threads to stop
-            should_stop.store(true, std::sync::atomic::Ordering::Release);
+            should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
             return Ok(GameRunResult::GoalReached);
         }
 
@@ -330,7 +330,7 @@ fn game_loop(
                     std::sync::mpsc::RecvTimeoutError::Disconnected => {
                         // Input thread has exited, set should_stop flag to true
                         // to tell other threads to stop
-                        should_stop.store(true, std::sync::atomic::Ordering::Release);
+                        should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
                         return Ok(GameRunResult::Canceled);
                     }
                 }
@@ -340,7 +340,7 @@ fn game_loop(
                     match key_event.code {
                         KeyCode::Esc => {
                             // Game should exit on Esc key
-                            should_stop.store(true, std::sync::atomic::Ordering::Release);
+                            should_stop.store(true, std::sync::atomic::Ordering::Relaxed);
                             // Set the game as canceled
                             return Ok(GameRunResult::Canceled);
                         }
@@ -380,10 +380,9 @@ fn start_timer(
     should_stop: &AtomicBool,
     ui_event_tx: Sender<UiEvent>,
 ) -> std::io::Result<()> {
-    // Get a new stdout handle
     while start_time.elapsed() < game_run_duration {
         // Check if the timer should stop early
-        if should_stop.load(std::sync::atomic::Ordering::Acquire) {
+        if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
         // Clear previous log
@@ -426,7 +425,7 @@ fn listen_to_user_input(
 ) -> std::io::Result<()> {
     loop {
         // Check if we should stop
-        if should_stop.load(std::sync::atomic::Ordering::Acquire) {
+        if should_stop.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
 
